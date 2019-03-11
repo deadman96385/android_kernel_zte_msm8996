@@ -153,6 +153,12 @@ struct sdhci_msm_pltfm_data {
 	u32 ice_clk_min;
 	struct sdhci_msm_pm_qos_data pm_qos_data;
 	bool core_3_0v_support;
+
+	/* ZTE_modify assx1207 reset-gpio begin */
+	#ifdef CONFIG_MMC_SSX1207
+	int reset_gpio;
+	#endif
+	/* ZTE_modify end */
 };
 
 struct sdhci_msm_bus_vote {
@@ -229,5 +235,8 @@ void sdhci_msm_pm_qos_cpu_vote(struct sdhci_host *host,
 		struct sdhci_msm_pm_qos_latency *latency, int cpu);
 bool sdhci_msm_pm_qos_cpu_unvote(struct sdhci_host *host, int cpu, bool async);
 
-
+#ifdef CONFIG_MMC_SSX1207
+extern int mmc_schedule_delayed_work(struct delayed_work *work,
+				     unsigned long delay);
+#endif
 #endif /* __SDHCI_MSM_H__ */

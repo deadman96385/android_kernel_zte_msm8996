@@ -47,6 +47,7 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
 #include <linux/mmc/sd.h>
+#include <linux/mmc/infos.h>
 
 #include <asm/uaccess.h>
 
@@ -1265,6 +1266,37 @@ static int send_stop(struct mmc_card *card, unsigned int timeout_ms,
 	return card_busy_detect(card, timeout_ms, use_r1b_resp, req, gen_err);
 }
 
+#define CARD_STATUS_CURRENT_STATE_MASK 0x1E00
+#define CARD_STATUS_CURRENT_STATE_SHIFT 9
+static char *mmc_status_string(u32 status)
+{
+	int current_state;
+
+	current_state = ((status & CARD_STATUS_CURRENT_STATE_MASK) >> CARD_STATUS_CURRENT_STATE_SHIFT);
+	switch (current_state) {
+	case 0:
+		return "idle";
+	case 1:
+		return "ready";
+	case 2:
+		return "ident";
+	case 3:
+		return "stby";
+	case 4:
+		return "tran";
+	case 5:
+		return "data";
+	case 6:
+		return "rcv";
+	case 7:
+		return "prg";
+	case 8:
+		return "dis";
+	default:
+		return "reserved";
+	}
+}
+
 #define ERR_NOMEDIUM	3
 #define ERR_RETRY	2
 #define ERR_ABORT	1
@@ -1284,8 +1316,8 @@ static int mmc_blk_cmd_error(struct request *req, const char *name, int error,
 
 	case -ETIMEDOUT:
 		pr_err_ratelimited(
-			"%s: timed out sending %s command, card status %#x\n",
-			req->rq_disk->disk_name, name, status);
+			"%s: timed out sending %s command, card status %#x(%s)\n",
+			req->rq_disk->disk_name, name, status, mmc_status_string(status));
 
 		/* If the status cmd initially failed, retry the r/w cmd */
 		if (!status_valid) {
@@ -3629,8 +3661,19 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 		if (cmd_flags & REQ_SECURE &&
 			!(card->quirks & MMC_QUIRK_SEC_ERASE_TRIM_BROKEN))
 			ret = mmc_blk_issue_secdiscard_rq(mq, req);
-		else
-			ret = mmc_blk_issue_discard_rq(mq, req);
+		else {
+			/* add for kingston  128G can not mmc_blk_issue_discard_rq ,will be blocked */
+			if (NULL != card &&  0x41 == card->cid.manfid
+				&& card->cid.prod_name[0] == 'S'
+				&& card->cid.prod_name[1] == 'D'
+				&& card->cid.prod_name[2] == '1'
+				&& card->cid.prod_name[3] == '2'
+				&& card->cid.prod_name[4] == '8') {
+				ret = mmc_blk_issue_secdiscard_rq(mq, req);
+			} else {
+				ret = mmc_blk_issue_discard_rq(mq, req);
+			}
+		}
 	} else if (cmd_flags & (REQ_FLUSH | REQ_BARRIER)) {
 		/* complete ongoing async transfer before issuing flush */
 		if (card->host->areq)
@@ -3693,6 +3736,14 @@ static struct mmc_blk_data *mmc_blk_alloc_req(struct mmc_card *card,
 	 */
 	if (!subname) {
 		md->name_idx = find_first_zero_bit(name_use, max_devices);
+		/* ZTE_modify fix ssx1207 mmcblk number begin */
+		#ifdef CONFIG_MMC_SSX1207
+		if (strncmp(mmc_hostname(card->host), "mmc2", 4) == 0) {
+			pr_info("%s fix mmcblk number\n", __func__);
+			md->name_idx = 2;
+		}
+		#endif
+		/* ZTE_modify end */
 		__set_bit(md->name_idx, name_use);
 	} else
 		md->name_idx = ((struct mmc_blk_data *)
@@ -4114,6 +4165,7 @@ static int mmc_blk_probe(struct mmc_card *card)
 		return -ENODEV;
 
 	mmc_fixup_device(card, blk_fixups);
+	mmc_device_info(card, NULL);
 
 	md = mmc_blk_alloc(card);
 	if (IS_ERR(md))

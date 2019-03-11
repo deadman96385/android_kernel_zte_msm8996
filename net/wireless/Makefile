@@ -19,7 +19,13 @@ CFLAGS_trace.o := -I$(src)
 
 ccflags-y += -D__CHECK_ENDIAN__
 
+# ZTE_MODIFY for jp docomo disable channel 14
+ifeq ($(findstring ZTE_DOCOMO,$(ZTE_C_MACROS)), ZTE_DOCOMO)
+$(obj)/regdb.c: $(src)/db_jp.txt $(src)/genregdb.awk
+	@$(AWK) -f $(srctree)/$(src)/genregdb.awk < $< > $@
+else
 $(obj)/regdb.c: $(src)/db.txt $(src)/genregdb.awk
 	@$(AWK) -f $(srctree)/$(src)/genregdb.awk < $< > $@
+endif
 
 clean-files := regdb.c

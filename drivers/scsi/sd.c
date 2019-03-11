@@ -1738,7 +1738,7 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 	unsigned int the_result;
 	struct scsi_sense_hdr sshdr;
 	int sense_valid = 0;
-
+	struct scsi_device *sdp = sdkp->device;
 	spintime = 0;
 
 	/* Spin up drives, as required.  Only do this at boot time */
@@ -1760,7 +1760,7 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 			 * doesn't have any media in it, don't bother
 			 * with any more polling.
 			 */
-			if (media_not_present(sdkp, &sshdr))
+			if (!sdp->wait_media && media_not_present(sdkp, &sshdr))
 				return;
 
 			if (the_result)
@@ -1824,6 +1824,23 @@ sd_spinup_disk(struct scsi_disk *sdkp)
 		} else if (sense_valid &&
 				sshdr.sense_key == UNIT_ATTENTION &&
 				sshdr.asc == 0x28) {
+			if (!spintime) {
+				spintime_expire = jiffies + 5 * HZ;
+				spintime = 1;
+			}
+			/* Wait 1 second for next try */
+			msleep(1000);
+		/*
+		 * Wait for USB flash devices with slow firmware.
+		 * This devices report sense 0x3a (Media Not Present).
+		 * Such as Sandisk Cruzer 8.02 (Sandisk U3)
+		 * Yes, this sense key/ASC combination shouldn't
+		 * occur here.  It's characteristic of these devices.
+		 */
+		} else if (sdp->wait_media && sense_valid &&
+				sshdr.sense_key == UNIT_ATTENTION &&
+				sshdr.asc == 0x3a) {
+			sd_printk(KERN_NOTICE, sdkp, "Media not present, retry...");
 			if (!spintime) {
 				spintime_expire = jiffies + 5 * HZ;
 				spintime = 1;

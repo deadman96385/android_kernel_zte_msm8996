@@ -37,3 +37,7 @@ config PAGE_POISONING
 config PAGE_GUARD
 	bool
 	select WANT_PAGE_DEBUG_FLAGS
+
+config PAGE_ZTE_STAT_EXT
+	bool
+	default y

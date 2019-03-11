@@ -938,6 +938,8 @@ static u32 mdss_mdp_calc_prefill_line_time(struct mdss_mdp_ctl *ctl,
 	if (!ctl || !ctl->mdata)
 		return 0;
 
+	mdata = ctl->mdata;
+
 	mixer = pipe->mixer_left;
 	if (!mixer)
 		return -EINVAL;
@@ -2365,6 +2367,9 @@ struct mdss_mdp_ctl *mdss_mdp_ctl_alloc(struct mdss_data_type *mdata,
 			ctl->mdata = mdata;
 			mutex_init(&ctl->lock);
 			mutex_init(&ctl->offlock);
+#ifdef CONFIG_BOARD_FUJISAN
+			mutex_init(&ctl->panel_on_lock);
+#endif
 			mutex_init(&ctl->flush_lock);
 			mutex_init(&ctl->rsrc_lock);
 			spin_lock_init(&ctl->spin_lock);
@@ -3976,6 +3981,15 @@ static void mdss_mdp_ctl_restore_sub(struct mdss_mdp_ctl *ctl)
 	writel_relaxed(temp, ctl->mdata->mdp_base +
 			MDSS_MDP_REG_DISP_INTF_SEL);
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctl->mfd && ctl->mfd->index == 1) {
+		u32 temp_val = readl_relaxed(ctl->mdata->mdp_base + MDSS_MDP_REG_VSYNC_SEL);
+
+		temp_val |=	0x00100;
+		writel_relaxed(temp_val, ctl->mdata->mdp_base + MDSS_MDP_REG_VSYNC_SEL);
+	}
+#endif
+
 	if (ctl->mfd && ctl->panel_data) {
 		ctl->mfd->ipc_resume = true;
 		mdss_mdp_pp_resume(ctl->mfd);
@@ -4085,6 +4099,15 @@ static int mdss_mdp_ctl_start_sub(struct mdss_mdp_ctl *ctl, bool handoff)
 
 	writel_relaxed(temp, ctl->mdata->mdp_base +
 		MDSS_MDP_REG_DISP_INTF_SEL);
+
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctl->mfd && ctl->mfd->index == 1) {
+		u32 temp_val = readl_relaxed(ctl->mdata->mdp_base + MDSS_MDP_REG_VSYNC_SEL);
+
+		temp_val |=	0x00100;
+		writel_relaxed(temp_val, ctl->mdata->mdp_base + MDSS_MDP_REG_VSYNC_SEL);
+	}
+#endif
 
 	mixer = ctl->mixer_left;
 	if (mixer) {
@@ -5507,7 +5530,9 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
 		} else {
 			sctl_flush_bits = sctl->flush_bits;
 		}
+		sctl->commit_in_progress = true;
 	}
+	ctl->commit_in_progress = true;
 	ctl_flush_bits = ctl->flush_bits;
 
 	ATRACE_END("postproc_programming");
@@ -5647,11 +5672,16 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg,
 
 	ATRACE_BEGIN("flush_kickoff");
 	mdss_mdp_ctl_write(ctl, MDSS_MDP_REG_CTL_FLUSH, ctl_flush_bits);
-	if (sctl && sctl_flush_bits) {
-		mdss_mdp_ctl_write(sctl, MDSS_MDP_REG_CTL_FLUSH,
-			sctl_flush_bits);
-		sctl->flush_bits = 0;
+	if (sctl) {
+		if (sctl_flush_bits) {
+			mdss_mdp_ctl_write(sctl, MDSS_MDP_REG_CTL_FLUSH,
+				sctl_flush_bits);
+			sctl->flush_bits = 0;
+		}
+		sctl->commit_in_progress = false;
 	}
+	ctl->commit_in_progress = false;
+
 	MDSS_XLOG(ctl->intf_num, ctl_flush_bits, sctl_flush_bits,
 		split_lm_valid);
 	wmb();

@@ -698,3 +698,8 @@ config PROCESS_RECLAIM
 	 (addr, addr + size-bytes) of the process.
 
 	 Any other vaule is ignored.
+
+config PAGE_ZTE_MIGRATETYPE_PREMOV
+	bool
+	depends on CMA
+	default n

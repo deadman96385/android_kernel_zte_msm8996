@@ -774,3 +774,9 @@ config MMC_CQ_HCI
 	  If you have a controller with this interface, say Y or M here.
 
 	  If unsure, say N.
+
+config MMC_SSX1207
+	tristate "SSX1207 Support"
+	depends on MMC_SDHCI && MMC_SDHCI_MSM
+	help
+	  add SSX1207 driver support

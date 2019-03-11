@@ -176,6 +176,7 @@ struct scsi_device {
 	unsigned broken_fua:1;		/* Don't set FUA bit */
 	unsigned lun_in_cdb:1;		/* Store LUN bits in CDB[1] */
 	unsigned use_rpm_auto:1; /* Enable runtime PM auto suspend */
+	unsigned wait_media:1; /* wait media ready */
 
 #define SCSI_DEFAULT_AUTOSUSPEND_DELAY  -1
 	int autosuspend_delay;

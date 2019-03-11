@@ -1049,7 +1049,7 @@ static int mdss_mdp_cmd_intf_callback(void *data, int event)
 		 * if we are going to suspended or pp split is not enabled,
 		 * just return
 		 */
-		if (ctx->intf_stopped || !is_pingpong_split(ctx->ctl->mfd))
+		if (ctx->intf_stopped)
 			return -EINVAL;
 		atomic_inc(&ctx->rdptr_cnt);
 
@@ -1203,7 +1203,8 @@ static void mdss_mdp_cmd_pingpong_done(void *arg)
 			       atomic_read(&ctx->koff_cnt));
 		if (sync_ppdone) {
 			atomic_inc(&ctx->pp_done_cnt);
-			schedule_work(&ctx->pp_done_work);
+			if (!ctl->commit_in_progress)
+				schedule_work(&ctx->pp_done_work);
 
 			mdss_mdp_resource_control(ctl,
 				MDP_RSRC_CTL_EVENT_PP_DONE);
@@ -1870,6 +1871,29 @@ int mdss_mdp_cmd_reconfigure_splash_done(struct mdss_mdp_ctl *ctl,
 	return ret;
 }
 
+static int __mdss_mdp_wait4pingpong(struct mdss_mdp_cmd_ctx *ctx)
+{
+	int rc = 0;
+	s64 expected_time = ktime_to_ms(ktime_get()) + KOFF_TIMEOUT_MS;
+	s64 time;
+
+	do {
+		rc = wait_event_timeout(ctx->pp_waitq,
+		atomic_read(&ctx->koff_cnt) == 0,
+		KOFF_TIMEOUT);
+		time = ktime_to_ms(ktime_get());
+
+		MDSS_XLOG(rc, time, expected_time, atomic_read(&ctx->koff_cnt));
+		/*
+		* If we time out, counter is valid and time is less,
+		* wait again.
+		*/
+	} while (atomic_read(&ctx->koff_cnt) && (rc == 0) &&
+	(time < expected_time));
+
+	return rc;
+}
+
 static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 {
 	struct mdss_mdp_cmd_ctx *ctx;
@@ -1891,9 +1915,7 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 	pr_debug("%s: intf_num=%d ctx=%pK koff_cnt=%d\n", __func__,
 			ctl->intf_num, ctx, atomic_read(&ctx->koff_cnt));
 
-	rc = wait_event_timeout(ctx->pp_waitq,
-			atomic_read(&ctx->koff_cnt) == 0,
-			KOFF_TIMEOUT);
+	rc = __mdss_mdp_wait4pingpong(ctx);
 
 	trace_mdp_cmd_wait_pingpong(ctl->num,
 				atomic_read(&ctx->koff_cnt));
@@ -2066,6 +2088,11 @@ static int mdss_mdp_cmd_panel_on(struct mdss_mdp_ctl *ctl,
 	if (is_pingpong_split(ctl->mfd))
 		sctx = (struct mdss_mdp_cmd_ctx *) ctl->intf_ctx[SLAVE_CTX];
 
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctl->num == 1) {
+		mutex_lock(&ctl->panel_on_lock);
+	}
+#endif
 	if (!__mdss_mdp_cmd_is_panel_power_on_interactive(ctx)) {
 		if (ctl->pending_mode_switch != SWITCH_RESOLUTION) {
 			rc = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_LINK_READY,
@@ -2109,6 +2136,11 @@ static int mdss_mdp_cmd_panel_on(struct mdss_mdp_ctl *ctl,
 	} else {
 		pr_err("%s: Panel already on\n", __func__);
 	}
+#ifdef CONFIG_BOARD_FUJISAN
+	if (ctl->num == 1) {
+		mutex_unlock(&ctl->panel_on_lock);
+	}
+#endif
 
 	return rc;
 }
@@ -3018,6 +3050,11 @@ int mdss_mdp_cmd_stop(struct mdss_mdp_ctl *ctl, int panel_power_state)
 			ctx->intf_stopped = 0;
 			if (sctx)
 				sctx->intf_stopped = 0;
+			/*
+			 * Tearcheck was disabled while entering LP2 state.
+			 * Enable it back to allow updates in LP1 state.
+			 */
+			mdss_mdp_tearcheck_enable(ctl, true);
 			/*
 			 * Tearcheck was disabled while entering LP2 state.
 			 * Enable it back to allow updates in LP1 state.

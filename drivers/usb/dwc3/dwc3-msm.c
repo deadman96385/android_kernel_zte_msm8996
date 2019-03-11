@@ -53,7 +53,7 @@
 #include "xhci.h"
 
 #define DWC3_IDEV_CHG_MAX 1500
-#define DWC3_HVDCP_CHG_MAX 1800
+#define DWC3_HVDCP_CHG_MAX  1500   //1800 zte_PM protect
 
 /* AHB2PHY register offsets */
 #define PERIPH_SS_AHB2PHY_TOP_CFG 0x10
@@ -243,6 +243,13 @@ struct dwc3_msm {
 	atomic_t                in_p3;
 	unsigned int		lpm_to_suspend_delay;
 	bool			init;
+	/* wall charger in which D+/D- is disconnected
+		would be recognized as usb cable, 1/5 */
+	struct delayed_work	invalid_chg_work;
+	/* end */
+	/* Usb online lpm test requirement, 1/5 */
+	struct class *lpm_test_class;
+	struct device *lpm_test_dev;
 };
 
 #define USB_HSPHY_3P3_VOL_MIN		3050000 /* uV */
@@ -262,6 +269,40 @@ struct dwc3_msm {
 
 static void dwc3_pwr_event_handler(struct dwc3_msm *mdwc);
 static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned mA);
+/* wall charger in which D+/D- is disconnected
+	would be recognized as an usb cable, 2/5 */
+static int skip_invalid_chg_work = 0;
+#define DWC3_IDEV_CHG_INVALID	501
+
+static void dwc3_invalid_chg_work(struct work_struct *w)
+{
+	struct dwc3_msm *mdwc = container_of(w, struct dwc3_msm, invalid_chg_work.work);
+	if (skip_invalid_chg_work){
+		dev_info(mdwc->dev, "do skip_invalid_chg_work\n");
+		skip_invalid_chg_work = 0;
+		return;
+	}
+
+	dev_info(mdwc->dev, "usb schedule %s\n", __func__);
+	dwc3_msm_gadget_vbus_draw(mdwc, DWC3_IDEV_CHG_INVALID);
+	return;
+}
+/*end*/
+
+/*
+ * for notify otg from gadget, 8/8
+ * event 1:  skip invalid_chg work, as usb has already been configured
+ * event 2:  ...
+ */
+static int dwc3_extra_event_from_gadget(struct dwc3_msm *mdwc, unsigned event)
+{
+	if (event == 1){
+		dev_info(mdwc->dev, "prepare skip_invalid_chg_work\n");
+		skip_invalid_chg_work = 1;
+	}
+	return 0;
+}
+/* end */
 
 /**
  *
@@ -1805,6 +1846,12 @@ static void dwc3_msm_notify_event(struct dwc3 *dwc, unsigned event,
 	case DWC3_CONTROLLER_NOTIFY_DISABLE_UPDXFER:
 		dwc3_msm_dbm_disable_updxfer(dwc, value);
 		break;
+	/* for notify otg from gadget, 7/8 */
+	case DWC3_CONTROLLER_GADGET_EXTRA_EVENT:
+		dev_dbg(mdwc->dev, "DWC3_CONTROLLER_GADGET_EXTRA_EVENT received\n");
+		dwc3_extra_event_from_gadget(mdwc, dwc->extra_event);
+		break;
+	/* end */
 	default:
 		dev_dbg(mdwc->dev, "unknown dwc3 event\n");
 		break;
@@ -2387,6 +2434,62 @@ static irqreturn_t msm_dwc3_pwr_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+/* Usb online lpm test requirement, 2/5 */
+static int forge_usb_offline = 0;
+
+static ssize_t set_usb_online_fn(struct device *dev, struct device_attribute *attr,
+								const char *buf, size_t count)
+{
+	int online;
+	struct dwc3_msm *mdwc = dev_get_drvdata(dev);
+
+	if (kstrtoint(buf, 10, &online) < 0)
+		return -EINVAL;
+
+	online = !!online;
+	pr_info("%s, online : %d\n", __func__, online);
+
+	mdwc->vbus_active = online;
+	dwc3_ext_event_notify(mdwc);
+
+	forge_usb_offline = !online;
+	return 1;
+}
+
+static DEVICE_ATTR(set_usb_online, S_IWUSR, NULL, set_usb_online_fn);
+
+static struct device_attribute *lpm_test_attributes[] = {
+	&dev_attr_set_usb_online,
+	NULL
+};
+
+static int lpm_test_create_device(struct dwc3_msm *motg)
+{
+	struct device_attribute **attrs = lpm_test_attributes;
+	struct device_attribute *attr;
+	int err;
+
+	pr_debug("%s\n", __func__);
+	motg->lpm_test_class = class_create(THIS_MODULE, "charger");
+	if (IS_ERR(motg->lpm_test_class))
+		return PTR_ERR(motg->lpm_test_class);
+
+	motg->lpm_test_dev = device_create(motg->lpm_test_class, NULL, 0, NULL, "test");
+	if (IS_ERR(motg->lpm_test_dev))
+		return PTR_ERR(motg->lpm_test_dev);
+
+	dev_set_drvdata(motg->lpm_test_dev, motg);
+
+	while ((attr = *attrs++)) {
+		err = device_create_file(motg->lpm_test_dev, attr);
+		if (err) {
+			device_destroy(motg->lpm_test_class, 0);
+			return err;
+		}
+	}
+	return 0;
+}
+
 static int dwc3_msm_power_get_property_usb(struct power_supply *psy,
 				  enum power_supply_property psp,
 				  union power_supply_propval *val)
@@ -2434,6 +2537,7 @@ static int dwc3_msm_power_set_property_usb(struct power_supply *psy,
 	int ret;
 	enum dwc3_id_state id;
 
+	pr_info("%s, event:%d, val:%d\n", __func__, psp, val->intval);
 	switch (psp) {
 	case POWER_SUPPLY_PROP_USB_OTG:
 		id = val->intval ? DWC3_ID_GROUND : DWC3_ID_FLOAT;
@@ -2466,6 +2570,11 @@ static int dwc3_msm_power_set_property_usb(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_PRESENT:
 		dev_dbg(mdwc->dev, "%s: notify xceiv event with val:%d\n",
 							__func__, val->intval);
+
+		/* Usb online lpm test requirement, 3/5 */
+		if (forge_usb_offline)
+			forge_usb_offline = 0;
+
 		/*
 		 * Now otg_sm_work() state machine waits for USB cable status.
 		 * Hence here it makes sure that schedule resume work only if
@@ -2540,7 +2649,7 @@ static int dwc3_msm_power_set_property_usb(struct power_supply *psy,
 		if (mdwc->chg_type != DWC3_INVALID_CHARGER)
 			mdwc->chg_state = USB_CHG_STATE_DETECTED;
 
-		dev_dbg(mdwc->dev, "%s: charger type: %s\n", __func__,
+		dev_info(mdwc->dev, "%s: charger type: %s\n", __func__,
 				chg_to_string(mdwc->chg_type));
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
@@ -2746,7 +2855,10 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	INIT_WORK(&mdwc->restart_usb_work, dwc3_restart_usb_work);
 	INIT_WORK(&mdwc->bus_vote_w, dwc3_msm_bus_vote_w);
 	INIT_DELAYED_WORK(&mdwc->sm_work, dwc3_otg_sm_work);
-
+	/* wall charger in which D+/D- is disconnected
+		would be recognized as usb cable, 5/5 */
+	INIT_DELAYED_WORK(&mdwc->invalid_chg_work, dwc3_invalid_chg_work);
+	/* end */
 	mdwc->dwc3_wq = alloc_ordered_workqueue("dwc3_wq", 0);
 	if (!mdwc->dwc3_wq) {
 		pr_err("%s: Unable to create workqueue dwc3_wq\n", __func__);
@@ -3083,6 +3195,11 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 		dwc3_ext_event_notify(mdwc);
 	}
 
+	/* Usb online lpm test requirement, 4/5 */
+	ret = lpm_test_create_device(mdwc);
+	if (ret) {
+		dev_dbg(&pdev->dev, "fail to setup lpm_test_device\n");
+	}
 	return 0;
 
 put_dwc3:
@@ -3365,15 +3482,18 @@ static int dwc3_msm_gadget_vbus_draw(struct dwc3_msm *mdwc, unsigned mA)
 	if (mdwc->charging_disabled)
 		return 0;
 
-	if (mdwc->chg_type != DWC3_INVALID_CHARGER) {
-		dev_dbg(mdwc->dev,
+	/* Usb online lpm test requirement, 5/5 */
+	if (forge_usb_offline)
+		return 0;
+	if ((mdwc->chg_type != DWC3_INVALID_CHARGER) && (mA != DWC3_IDEV_CHG_INVALID)) {
+		dev_err(mdwc->dev,
 			"SKIP setting power supply type again,chg_type = %d\n",
 			mdwc->chg_type);
 		goto skip_psy_type;
 	}
 
-	dev_dbg(mdwc->dev, "Requested curr from USB = %u, max-type-c:%u\n",
-					mA, mdwc->typec_current_max);
+	dev_info(mdwc->dev, "Requested curr from USB = %u, max-type-c:%u, mdwc->chg_type:%d\n",
+					mA, mdwc->typec_current_max, mdwc->chg_type);
 
 	if (mdwc->chg_type == DWC3_SDP_CHARGER)
 		power_supply_type = POWER_SUPPLY_TYPE_USB;
@@ -3429,7 +3549,7 @@ skip_psy_type:
 	return 0;
 
 psy_error:
-	dev_dbg(mdwc->dev, "power supply error when setting property\n");
+	dev_err(mdwc->dev, "power supply error when setting property\n");
 	return -ENXIO;
 }
 
@@ -3438,20 +3558,22 @@ static void dwc3_check_float_lines(struct dwc3_msm *mdwc)
 	int dpdm;
 	struct dwc3 *dwc = platform_get_drvdata(mdwc->dwc3);
 
-	dev_dbg(mdwc->dev, "%s: Check linestate\n", __func__);
+	dev_info(mdwc->dev, "%s: Check linestate\n", __func__);
 	dwc3_msm_gadget_vbus_draw(mdwc, 0);
 
 	/* Get linestate with Idp_src enabled */
 	dpdm = usb_phy_dpdm_with_idp_src(mdwc->hs_phy);
+	dev_info(mdwc->dev, "%s: dpdm %d\n", __func__, dpdm);
 	if (dpdm == 0x2) {
 		/* DP is HIGH = lines are floating */
 		mdwc->chg_type = DWC3_PROPRIETARY_CHARGER;
 		mdwc->otg_state = OTG_STATE_B_IDLE;
+		dwc3_msm_gadget_vbus_draw(mdwc, DWC3_IDEV_CHG_INVALID);
 		pm_runtime_put_sync(mdwc->dev);
 		dbg_event(0xFF, "FLT psync",
 				atomic_read(&mdwc->dev->power.usage_count));
 	} else if (dpdm) {
-		dev_dbg(mdwc->dev, "%s:invalid linestate:%x\n", __func__, dpdm);
+		dev_info(mdwc->dev, "%s:invalid linestate:%x\n", __func__, dpdm);
 	}
 }
 
@@ -3525,6 +3647,8 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 		return;
 	}
 
+	dev_info(mdwc->dev, "dwc3 otg_state = %d, inputs = %lx, chg_type = %d\n",
+		mdwc->otg_state, mdwc->inputs, mdwc->chg_type);
 	state = usb_otg_state_string(mdwc->otg_state);
 	dev_dbg(mdwc->dev, "%s state\n", state);
 	dbg_event(0xFF, state, 0);
@@ -3580,6 +3704,10 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 					if (mdwc->chg_type != DWC3_SDP_CHARGER)
 						break;
 				}
+				/* wall charger in which D+/D- is disconnected
+				would be recognized as an usb cable, 4.1/5 */
+				schedule_delayed_work(&mdwc->invalid_chg_work, 5*HZ);
+				/* end */
 				dwc3_otg_start_peripheral(mdwc, 1);
 				mdwc->otg_state = OTG_STATE_B_PERIPHERAL;
 				dbg_event(0xFF, "Undef SDP",
@@ -3646,6 +3774,10 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 				dwc3_otg_start_peripheral(mdwc, 1);
 				mdwc->otg_state = OTG_STATE_B_PERIPHERAL;
 				work = 1;
+				/* wall charger in which D+/D- is disconnected
+				would be recognized as an usb cable, 4.2/5 */
+				schedule_delayed_work(&mdwc->invalid_chg_work, 5*HZ);
+				/* end */
 				break;
 			/* fall through */
 			default:
@@ -3653,6 +3785,12 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 			}
 		} else {
 			mdwc->typec_current_max = 0;
+			/* wall charger in which D+/D- is disconnected
+				would be recognized as an usb cable, 5/5 */
+			dev_dbg(mdwc->dev,  "cancel invalid_chg_work\n");
+			cancel_delayed_work_sync(&mdwc->invalid_chg_work);
+			skip_invalid_chg_work = 0;
+			/* end */
 			dwc3_msm_gadget_vbus_draw(mdwc, 0);
 			dev_dbg(mdwc->dev, "No device, allowing suspend\n");
 		}

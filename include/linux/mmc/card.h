@@ -690,6 +690,13 @@ static inline bool mmc_enable_qca9377_settings(const struct mmc_card *c)
 	return c->quirks & MMC_QUIRK_QCA9377_SETTINGS;
 }
 
+typedef struct emmc_data_type_tag {
+	int manu_id;
+	char vendor[15];
+} emmc_data_type;
+#define mmc_card_month(c)  ((c)->cid.month)
+#define mmc_card_year(c)  ((c)->cid.year)
+#define mmc_card_mid(c)  ((c)->cid.manfid)
 #define mmc_card_name(c)	((c)->cid.prod_name)
 #define mmc_card_id(c)		(dev_name(&(c)->dev))
 

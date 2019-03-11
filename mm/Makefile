@@ -79,3 +79,5 @@ obj-$(CONFIG_CMA)	+= cma.o
 obj-$(CONFIG_MEMORY_BALLOON) += balloon_compaction.o
 obj-$(CONFIG_PROCESS_RECLAIM)	+= process_reclaim.o
 obj-$(CONFIG_CMA_DEBUGFS) += cma_debug.o
+obj-$(CONFIG_PAGE_ZTE_STAT_EXT) += page_zte_stat_ext.o
+obj-$(CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV) += page_zte_mt_premov.o

@@ -43,6 +43,34 @@ static LIST_HEAD(devfreq_list);
 static DEFINE_MUTEX(devfreq_list_lock);
 
 /**
+ * devfreq_print_freq_table() - print frequency of freq_table
+ * @devfreq:	the devfreq instance
+ */
+static void devfreq_print_freq_table(struct devfreq *devfreq)
+{
+	int lev;
+	char buf[16];
+	char freq_list[255];
+
+	if (devfreq->profile->max_state == 0) {
+		dev_err(&devfreq->dev, "DEVFREQ: freq table is null\n");
+		return;
+	}
+
+	memset(buf, 0, 16);
+	memset(freq_list, 0, 255);
+
+	for (lev = 0; lev < devfreq->profile->max_state; lev++) {
+		snprintf(buf, 16, "%u", devfreq->profile->freq_table[lev]);
+		strlcat(freq_list, buf, 255);
+		if (lev < (devfreq->profile->max_state - 1))
+			strlcat(freq_list, ", ", 255);
+	}
+
+	dev_err(&devfreq->dev, "DEVFREQ: freq table { %s }\n", freq_list);
+}
+
+/**
  * find_device_devfreq() - find devfreq struct using device pointer
  * @dev:	device pointer used to lookup device devfreq.
  *
@@ -222,9 +250,12 @@ int update_devfreq(struct devfreq *devfreq)
 		return err;
 
 	if (devfreq->profile->freq_table)
-		if (devfreq_update_status(devfreq, freq))
+		if (devfreq_update_status(devfreq, freq)) {
 			dev_err(&devfreq->dev,
-				"Couldn't update frequency transition information.\n");
+				"Couldn't update frequency transition information"
+				" to %luHz, previous_freq = %luHz.\n", freq, devfreq->previous_freq);
+			devfreq_print_freq_table(devfreq);
+		}
 
 	devfreq->previous_freq = freq;
 	return err;

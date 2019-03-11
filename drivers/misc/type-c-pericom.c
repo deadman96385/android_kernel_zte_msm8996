@@ -31,9 +31,11 @@
 #define MAX_CURRENT_MEDIUM     1500
 #define MAX_CURRENT_HIGH       3000
 
-#define PIUSB_1P8_VOL_MAX	1800000 /* uV */
+#define PIUSB_2P8_VOL_MAX	2800000 /* uV */
 
 #define DETACH_DEBOUNCE_MS	500
+
+#define PIUSB_STANDUP_TIME_DELAY_MS 10
 
 static bool disable_on_suspend;
 module_param(disable_on_suspend , bool, S_IRUGO | S_IWUSR);
@@ -296,7 +298,7 @@ static int piusb_ldo_init(struct pi_usb_type_c *pi, bool init)
 	int rc = 0;
 
 	if (!init) {
-		regulator_set_voltage(pi->i2c_1p8, 0, PIUSB_1P8_VOL_MAX);
+		regulator_set_voltage(pi->i2c_1p8, 0, PIUSB_2P8_VOL_MAX);
 		rc = regulator_disable(pi->i2c_1p8);
 		return rc;
 	}
@@ -307,8 +309,8 @@ static int piusb_ldo_init(struct pi_usb_type_c *pi, bool init)
 		dev_err(&pi->client->dev, "unable to get 1p8(%d)\n", rc);
 		return rc;
 	}
-	rc = regulator_set_voltage(pi->i2c_1p8, PIUSB_1P8_VOL_MAX,
-					PIUSB_1P8_VOL_MAX);
+	rc = regulator_set_voltage(pi->i2c_1p8, PIUSB_2P8_VOL_MAX,
+					PIUSB_2P8_VOL_MAX);
 	if (rc) {
 		dev_err(&pi->client->dev, "unable to set voltage(%d)\n", rc);
 		goto put_1p8;
@@ -323,7 +325,7 @@ static int piusb_ldo_init(struct pi_usb_type_c *pi, bool init)
 	return 0;
 
 put_1p8:
-	regulator_set_voltage(pi->i2c_1p8, 0, PIUSB_1P8_VOL_MAX);
+	regulator_set_voltage(pi->i2c_1p8, 0, PIUSB_2P8_VOL_MAX);
 	return rc;
 }
 
@@ -497,6 +499,9 @@ static int piusb_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 		goto gpio_disable;
 	}
 
+	/* ZTE_modify add stand-up time 10ms */
+	msleep(PIUSB_STANDUP_TIME_DELAY_MS);
+
 	ret = piusb_i2c_enable(pi_usb, true, CTL_MODE_DRP);
 	if (ret) {
 		dev_err(&pi_usb->client->dev, "i2c access failed\n");
@@ -579,7 +584,7 @@ static int piusb_i2c_suspend(struct device *dev)
 	if (disable_on_suspend)
 		piusb_i2c_enable(pi, false, pi->current_mode);
 
-	regulator_set_voltage(pi->i2c_1p8, 0, PIUSB_1P8_VOL_MAX);
+	regulator_set_voltage(pi->i2c_1p8, 0, PIUSB_2P8_VOL_MAX);
 	regulator_disable(pi->i2c_1p8);
 
 	if (disable_on_suspend)
@@ -601,13 +606,8 @@ static int piusb_i2c_resume(struct device *dev)
 		return 0;
 	}
 
-	if (disable_on_suspend) {
-		gpio_set_value(pi->enb_gpio, pi->enb_gpio_polarity);
-		msleep(PERICOM_I2C_DELAY_MS);
-	}
-
-	rc = regulator_set_voltage(pi->i2c_1p8, PIUSB_1P8_VOL_MAX,
-					PIUSB_1P8_VOL_MAX);
+	rc = regulator_set_voltage(pi->i2c_1p8, PIUSB_2P8_VOL_MAX,
+					PIUSB_2P8_VOL_MAX);
 	if (rc)
 		dev_err(&pi->client->dev, "unable to set voltage(%d)\n", rc);
 
@@ -615,8 +615,12 @@ static int piusb_i2c_resume(struct device *dev)
 	if (rc)
 		dev_err(&pi->client->dev, "unable to enable 1p8-reg(%d)\n", rc);
 
-	if (disable_on_suspend)
+	if (disable_on_suspend) {
+		gpio_set_value(pi->enb_gpio, pi->enb_gpio_polarity);
+		msleep(PERICOM_I2C_DELAY_MS);
 		rc = piusb_i2c_enable(pi, true, pi->current_mode);
+	}
+
 	enable_irq(pi->client->irq);
 
 	return rc;

@@ -43,6 +43,17 @@
 #include "sdhci-msm-ice.h"
 #include "cmdq_hci.h"
 
+/* ZTE_modify add ssx1207 reset control begin*/
+#ifdef CONFIG_MMC_SSX1207
+#include <linux/time.h>
+#include <linux/mutex.h>
+#endif
+/* ZTE_modify end */
+/** ZTE MODIFY  for proc file read  */
+#include <linux/seq_file.h>
+#include <linux/proc_fs.h>
+#include <linux/string_helpers.h>
+/* end */
 #define QOS_REMOVE_DELAY_MS	10
 #define CORE_POWER		0x0
 #define CORE_SW_RST		(1 << 7)
@@ -1273,6 +1284,236 @@ out:
 	return ret;
 }
 
+/* ZTE_modify add voltage compliant for ssx1207 begin */
+#ifdef CONFIG_MMC_SSX1207
+#define MAX_SSX_SIZE 32
+#define SDHCI_RESET_TIME (2*1000)
+/* ssx1207 must has 1.8v voltage to support key-affirm */
+static int ssx1207_compatibility(struct device *dev,
+			struct sdhci_msm_host *msm_host)
+{
+	char prop_name[MAX_SSX_SIZE];
+	struct device_node *np = dev->of_node;
+
+	dev_info(dev, "%s enter\n", __func__);
+	if (!msm_host || !(msm_host->mmc)) {
+		dev_err(dev, "%s msm_host has null point\n", __func__);
+		return -EINVAL;
+	}
+
+	msm_host->mmc->ssx1207_flag = false;
+	snprintf(prop_name, MAX_SSX_SIZE, "qcom,ssx1207-flag");
+	if (of_get_property(np, prop_name, NULL))
+		msm_host->mmc->ssx1207_flag = true;
+
+	dev_info(dev, "%s ssx1207_flag=%d\n",
+		__func__, msm_host->mmc->ssx1207_flag);
+
+	return 0;
+}
+
+static int ssx1207_gpio_config(struct device *dev,
+			struct sdhci_msm_host *msm_host)
+{
+	struct device_node *np = dev->of_node;
+	struct sdhci_msm_pltfm_data *pdata = msm_host->pdata;
+	int ret = 0;
+
+	dev_info(dev, "%s enter\n", __func__);
+	if (!msm_host || !(msm_host->mmc)) {
+		dev_err(dev, "%s msm_host has null point\n", __func__);
+		return -EINVAL;
+	}
+
+	if (!msm_host->mmc->ssx1207_flag) {
+		dev_info(dev, "%s not ssx device\n", __func__);
+		return 0;
+	}
+
+	/* don't need cd-gpio and card detect */
+	pdata->caps2 &= (~MMC_CAP2_CD_ACTIVE_HIGH);
+	pdata->status_gpio = -EINVAL;
+
+	/* reset gpio config */
+	pdata->reset_gpio = of_get_named_gpio(np, "reset-gpios", 0);
+	if (pdata->reset_gpio < 0) {
+		dev_info(dev, "don't find reset-gpio ret=%d\n",
+			pdata->reset_gpio);
+		return 0;
+	}
+
+	ret = gpio_request(pdata->reset_gpio, "ssx1207 reset");
+	if (ret) {
+		pr_err("%s: Failed to request gpio %d\n",
+			__func__, pdata->reset_gpio);
+		pdata->reset_gpio = 0;
+		return ret;
+	}
+
+	gpio_direction_output(pdata->reset_gpio, 0);
+	usleep_range(SDHCI_RESET_TIME, SDHCI_RESET_TIME+5);
+	gpio_direction_output(pdata->reset_gpio, 1);
+	return 0;
+}
+
+static int ssx1207_por_gpio_control(struct sdhci_msm_host *msm_host, int val)
+{
+	struct sdhci_msm_pltfm_data *pdata = msm_host->pdata;
+
+	pr_info("%s val=%d enter\n", __func__, val);
+	if (!msm_host || !(msm_host->mmc)) {
+		pr_info("%s msm_host has null point\n", __func__);
+		return -EINVAL;
+	}
+
+	if (!msm_host->mmc->ssx1207_flag) {
+		pr_info("%s not ssx device\n", __func__);
+		return 0;
+	}
+
+	gpio_direction_output(pdata->reset_gpio, val);
+
+	return 0;
+}
+
+#define SSX1207_STOP_DETECT_TIME (5*HZ)
+#define SSX1207_DETECT_DELAY_TIME (200)
+#define SSX1207_WAKEUP_TIME (5000)
+#define POR_ON  1
+#define POR_OFF 0
+
+static int major;
+static struct class *por_ctl_class;
+static struct class_device	*por_ctl_dev;
+static struct sdhci_msm_host *g_msm_host;
+static DEFINE_MUTEX(por_lock);
+static struct workqueue_struct *cd_wq;
+static struct delayed_work ssx1207_dwq;
+static spinlock_t ssx_lock;
+static bool ssx1207_detect_flag;
+
+static int por_ctl_open(struct inode *inode, struct file *file)
+{
+	if (file->f_flags & O_NONBLOCK) {
+		if (!mutex_trylock(&por_lock))
+			return -EBUSY;
+	} else {
+		mutex_lock(&por_lock);
+	}
+
+	return 0;
+}
+
+static void ssx1207_detect_change(struct mmc_host *host)
+{
+#ifdef CONFIG_MMC_DEBUG
+	unsigned long flags;
+
+	spin_lock_irqsave(&host->lock, flags);
+	WARN_ON(host->removed);
+	spin_unlock_irqrestore(&host->lock, flags);
+#endif
+
+	/*
+	 * If the device is configured as wakeup, we prevent a new sleep for
+	 * 5 s to give provision for user space to consume the event.
+	 */
+	if (device_can_wakeup(mmc_dev(host)))
+		pm_wakeup_event(mmc_dev(host), SSX1207_WAKEUP_TIME);
+
+	host->detect_change = 1;
+	spin_lock(&ssx_lock);
+	g_msm_host->mmc->caps |= MMC_CAP_NEEDS_POLL;
+	ssx1207_detect_flag = 1;
+	spin_unlock(&ssx_lock);
+
+	pr_info("%s: %s\n", mmc_hostname(host), __func__);
+
+	mmc_schedule_delayed_work(&host->detect,
+		 msecs_to_jiffies(SSX1207_DETECT_DELAY_TIME));
+}
+
+static void ssx1207_stop_card_detect(struct work_struct *work)
+{
+	pr_info("%s: %s\n", mmc_hostname(g_msm_host->mmc), __func__);
+	spin_lock(&ssx_lock);
+	ssx1207_detect_flag = 0;
+	g_msm_host->mmc->caps &= ~MMC_CAP_NEEDS_POLL;
+	spin_unlock(&ssx_lock);
+}
+
+static long por_ctl_ioctl(struct file *file, unsigned int cmd,
+			 unsigned long arg)
+{
+	int ret = 0;
+
+	pr_info("%s: %s cmd=%d\n",
+		mmc_hostname(g_msm_host->mmc), __func__, cmd);
+
+	switch (cmd) {
+	case POR_ON:
+		ssx1207_por_gpio_control(g_msm_host, 1);
+		cancel_delayed_work(&ssx1207_dwq);
+		if (!ssx1207_detect_flag) {
+			pr_info("%s: %s ssx detect is stopped\n",
+				 mmc_hostname(g_msm_host->mmc), __func__);
+			return 0;
+		}
+		queue_delayed_work(cd_wq, &ssx1207_dwq,
+				SSX1207_STOP_DETECT_TIME);
+		break;
+
+	case POR_OFF:
+		ssx1207_por_gpio_control(g_msm_host, 0);
+		cancel_delayed_work(&ssx1207_dwq);
+		if (ssx1207_detect_flag) {
+			pr_info("%s: %s ssx detect is running\n",
+				 mmc_hostname(g_msm_host->mmc), __func__);
+			return 0;
+		}
+		ssx1207_detect_change(g_msm_host->mmc);
+		break;
+	default:
+		ret = -EINVAL;
+	}
+
+	return ret;
+}
+
+static int por_ctl_release(struct inode *inode, struct file *file)
+{
+	mutex_unlock(&por_lock);
+	return 0;
+}
+
+static const struct file_operations por_ctl_fops = {
+	.owner  =   THIS_MODULE,
+	.open   =   por_ctl_open,
+	.unlocked_ioctl = por_ctl_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl = por_ctl_ioctl,
+#endif
+	.release =  por_ctl_release,
+};
+
+static int por_ctl_init(const char *pdev_name)
+{
+	pr_info("%s: %s\n", mmc_hostname(g_msm_host->mmc), __func__);
+
+	spin_lock_init(&ssx_lock);
+	cd_wq = create_workqueue("cd_wq");
+	INIT_DELAYED_WORK(&ssx1207_dwq, ssx1207_stop_card_detect);
+
+	major = register_chrdev(0, "por_ctl", &por_ctl_fops);
+	por_ctl_class = class_create(THIS_MODULE, "por_ctl");
+	por_ctl_dev = (struct class_device *)device_create(por_ctl_class,
+			 NULL, MKDEV(major, 0), NULL, pdev_name);
+
+	return 0;
+}
+#endif
+/* ZTE_modify end */
+
 #define MAX_PROP_SIZE 32
 static int sdhci_msm_dt_parse_vreg_info(struct device *dev,
 		struct sdhci_msm_reg_data **vreg_data, const char *vreg_name)
@@ -1656,7 +1897,7 @@ struct sdhci_msm_pltfm_data *sdhci_msm_populate_pdata(struct device *dev,
 	}
 
 	if (sdhci_msm_dt_get_array(dev, "qcom,devfreq,freq-table",
-			&msm_host->mmc->clk_scaling.freq_table,
+			&msm_host->mmc->clk_scaling.host_freq_table,
 			&msm_host->mmc->clk_scaling.freq_table_sz, 0))
 		pr_debug("%s: no clock scaling frequencies were supplied\n",
 			dev_name(dev));
@@ -3296,6 +3537,116 @@ void sdhci_msm_pm_qos_irq_vote(struct sdhci_host *host)
 				msm_host->pm_qos_irq.latency);
 }
 
+/** ZTE MODIFY  for save emmc/sdcard info to proc/file*/
+struct mmc_host *emmc_host = NULL;
+struct mmc_host *sdcard_host = NULL;
+
+static emmc_data_type emmc_vendor_info[] = {
+	/*manu id	vendor*/
+	{ 0x00,	"Unknown" },
+	{ 0x11,	"Toshiba" },
+	{ 0x15,	"Samsung" },
+	{ 0x45,	"Sandisk" },
+	{ 0x90,	"Hynix" },
+};
+
+char *mmc_get_emmc_vendor(int manu_id)
+{
+	int id = 0;
+	int array_len =  sizeof(emmc_vendor_info)/sizeof(emmc_data_type);
+
+	for (id = 0 ; id < array_len ; id++) {
+		if (emmc_vendor_info[id].manu_id == manu_id)
+		return emmc_vendor_info[id].vendor;
+	}
+
+	return emmc_vendor_info[0].vendor;
+}
+
+int string_getmmc_sizeInGB(u64 size, char *buf, int len)
+{
+	int i = 0;
+	u64 size_inGB = (u64)(size / 1024/1024/1024);
+
+	while (size_inGB >= 1) {
+		size_inGB = size_inGB/2;
+		i++;
+	}
+	size_inGB = 1 << i;
+	snprintf(buf, len, "%lld%s", (unsigned long long)size_inGB, "GB");
+	return 0;
+}
+static int mmc_proc_show(struct seq_file *m, void *v)
+{
+	struct mmc_card *emmc_card = NULL;
+	int size;
+	char cap_str[10];
+
+	if (NULL != emmc_host &&  NULL != emmc_host->card) {
+		emmc_card = emmc_host->card;
+		size = emmc_card->ext_csd.sectors;
+		string_getmmc_sizeInGB((u64)size << 9,
+				cap_str, sizeof(cap_str));
+
+		seq_printf(m, "%s-%s-%d/%d-%s-NA\n",
+				mmc_get_emmc_vendor(mmc_card_mid(emmc_card)),
+				mmc_card_name(emmc_card),
+				mmc_card_month(emmc_card),
+				mmc_card_year(emmc_card),
+				cap_str);
+	} else {
+		seq_puts(m, "No emmc info\n");
+	}
+
+	return 0;
+}
+
+static int msm_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, mmc_proc_show, NULL);
+}
+
+static const struct file_operations mmc_proc_fops = {
+	.open		= msm_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int sdcard_proc_show(struct seq_file *m, void *v)
+{
+	struct mmc_card *emmc_card = NULL;
+	int size;
+	char cap_str[10];
+
+	if (NULL != sdcard_host &&  NULL != sdcard_host->card) {
+		emmc_card = sdcard_host->card;
+		size = emmc_card->csd.capacity << (emmc_card->csd.read_blkbits - 9);
+
+		string_getmmc_sizeInGB((u64)size << 9,
+			cap_str, sizeof(cap_str));
+
+		seq_printf(m, "%s-%s\n", mmc_card_name(emmc_card), cap_str);
+	} else {
+		seq_puts(m, "No sdcard info\n");
+	}
+
+	return 0;
+}
+
+static int sdcard_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, sdcard_proc_show, NULL);
+}
+
+static const struct file_operations sdcard_proc_fops = {
+	.open		= sdcard_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+/* end  */
+
 void sdhci_msm_pm_qos_irq_unvote(struct sdhci_host *host, bool async)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
@@ -3629,8 +3980,13 @@ void sdhci_msm_pm_qos_cpu_init(struct sdhci_host *host,
 		group->req.type = PM_QOS_REQ_AFFINE_CORES;
 		cpumask_copy(&group->req.cpus_affine,
 			&msm_host->pdata->pm_qos_data.cpu_group_map.mask[i]);
+		#ifdef CONFIG_MMC_SSX1207
+		/* We set default latency here for all pm_qos cpu groups. */
+		group->latency = PM_QOS_DEFAULT_VALUE;
+		#else
 		/* For initialization phase, set the performance mode latency */
 		group->latency = latency[i].latency[SDHCI_PERFORMANCE_MODE];
+		#endif
 		pm_qos_add_request(&group->req, PM_QOS_CPU_DMA_LATENCY,
 			group->latency);
 		pr_info("%s (): voted for group #%d (mask=0x%lx) latency=%d (0x%p)\n",
@@ -3867,7 +4223,6 @@ static void sdhci_msm_cmdq_init(struct sdhci_host *host,
 static void sdhci_msm_cmdq_init(struct sdhci_host *host,
 				struct platform_device *pdev)
 {
-
 }
 #endif
 
@@ -3905,7 +4260,8 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 	struct resource *tlmm_memres = NULL;
 	void __iomem *tlmm_mem;
 	unsigned long flags;
-
+	static bool emmc_proc_init = false;
+	static bool sdcard_proc_init = false;
 	pr_debug("%s: Enter %s\n", dev_name(&pdev->dev), __func__);
 	msm_host = devm_kzalloc(&pdev->dev, sizeof(struct sdhci_msm_host),
 				GFP_KERNEL);
@@ -3982,6 +4338,13 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "DT parsing error\n");
 			goto pltfm_free;
 		}
+
+		/* ZTE_modify add voltage compliant for ssx1207 begin */
+		#ifdef CONFIG_MMC_SSX1207
+		ssx1207_compatibility(&pdev->dev, msm_host);
+		ssx1207_gpio_config(&pdev->dev, msm_host);
+		#endif
+		/* ZTE_modify end */
 	} else {
 		dev_err(&pdev->dev, "No device tree node\n");
 		goto pltfm_free;
@@ -4368,6 +4731,32 @@ static int sdhci_msm_probe(struct platform_device *pdev)
 		device_remove_file(&pdev->dev, &msm_host->auto_cmd21_attr);
 	}
 	/* Successful initialization */
+
+#ifdef CONFIG_MMC_SSX1207
+	if (msm_host->mmc->ssx1207_flag) {
+		pr_info("%s: %s add por gpio control\n",
+			 mmc_hostname(host->mmc), __func__);
+		g_msm_host = msm_host;
+		por_ctl_init("ssx1207");
+	}
+#endif
+/** ZTE MODIFY  for save emmc/sdcard info to proc/file*/
+	if (msm_host->pdata->mmc_bus_width == MMC_CAP_8_BIT_DATA) {
+		/*create emmc proc info*/
+		if (false == emmc_proc_init) {
+			emmc_host = msm_host->mmc;
+			proc_create("driver/emmc_id", 0, NULL, &mmc_proc_fops);
+			emmc_proc_init = true;
+		}
+	} else if (msm_host->pdata->mmc_bus_width == MMC_CAP_4_BIT_DATA) {
+		/*create sdcard proc info*/
+		if (false == sdcard_proc_init) {
+			sdcard_host = msm_host->mmc;
+			proc_create("driver/sdcard_id", 0, NULL,  &sdcard_proc_fops);
+			sdcard_proc_init = true;
+		}
+	}
+/** end */
 	goto out;
 
 remove_max_bus_bw_file:
@@ -4477,7 +4866,6 @@ static int sdhci_msm_cfg_sdio_wakeup(struct sdhci_host *host, bool enable)
 		} else {
 			pr_err("%s: sdiowakeup_irq(%d)invalid\n",
 					mmc_hostname(host->mmc), enable);
-
 		}
 	}
 out:
@@ -4488,7 +4876,6 @@ out:
 	spin_unlock_irqrestore(&host->lock, flags);
 	return ret;
 }
-
 
 static int sdhci_msm_runtime_suspend(struct device *dev)
 {

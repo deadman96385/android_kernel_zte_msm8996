@@ -30,6 +30,10 @@ struct panel_id {
 #define DEFAULT_ROTATOR_FRAME_RATE 120
 #define ROTATOR_LOW_FRAME_RATE 30
 #define MDSS_DSI_RST_SEQ_LEN	10
+#ifdef CONFIG_BOARD_FUJISAN
+#define MDSS_DSI_BL_CALIB_LEN	256
+#define MDSS_DSI_HUE_NUM	256
+#endif
 /* worst case prefill lines for all chipsets including all vertical blank */
 #define MDSS_MDP_MAX_PREFILL_FETCH 25
 
@@ -631,6 +635,10 @@ struct mdss_panel_info {
 	bool panel_ack_disabled;
 	bool esd_check_enabled;
 	bool allow_phy_power_off;
+	#ifdef CONFIG_BOARD_FUJISAN
+	u32 bl_calib_values[MDSS_DSI_BL_CALIB_LEN];
+	bool is_bl_calib;
+	#endif
 	char dfps_update;
 	/* new requested fps before it is updated in hw */
 	int new_fps;
@@ -773,6 +781,7 @@ struct mdss_panel_timing {
 struct mdss_panel_data {
 	struct mdss_panel_info panel_info;
 	void (*set_backlight) (struct mdss_panel_data *pdata, u32 bl_level);
+	void (*vr_mode_enable) (struct mdss_panel_data *pdata, bool enable);	//zte jiangfeng add for VR mode
 	unsigned char *mmss_cc_base;
 
 	/**

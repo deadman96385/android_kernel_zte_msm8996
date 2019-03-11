@@ -199,6 +199,7 @@ static struct soc_button_info soc_button_PNP0C40[] = {
 	{ "volume_up", 2, EV_KEY, KEY_VOLUMEUP, true, false },
 	{ "volume_down", 3, EV_KEY, KEY_VOLUMEDOWN, true, false },
 	{ "rotation_lock", 4, EV_SW, SW_ROTATE_LOCK, false, false },
+	{ "camera_key", 5, EV_KEY, KEY_CAMERA, true, false },
 	{ }
 };
 

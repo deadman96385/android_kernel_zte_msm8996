@@ -425,7 +425,13 @@ extern int alloc_contig_range(unsigned long start, unsigned long end,
 extern void free_contig_range(unsigned long pfn, unsigned nr_pages);
 
 /* CMA stuff */
+#ifdef CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV
+/* we extend this func to free reserved unmovable pageblocks. */
+extern void init_cma_reserved_pageblock(struct page *page,
+							int migratetype);
+#else
 extern void init_cma_reserved_pageblock(struct page *page);
+#endif
 
 #endif
 
