@@ -66,6 +66,10 @@
 #include <asm/div64.h>
 #include "internal.h"
 
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+#include "page_zte_stat_ext.h"
+#endif
+
 /* prevent >1 _updater_ of zone percpu pageset ->high and ->batch fields */
 static DEFINE_MUTEX(pcp_batch_high_lock);
 #define MIN_PERCPU_PAGELIST_FRACTION	(8)
@@ -815,6 +819,9 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 	unsigned long flags;
 	int migratetype;
 	unsigned long pfn = page_to_pfn(page);
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	enum zone_type zoneidx = page_zonenum(page);
+#endif
 
 	if (!free_pages_prepare(page, order))
 		return;
@@ -823,6 +830,13 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 	local_irq_save(flags);
 	__count_vm_events(PGFREE, 1 << order);
 	set_freepage_migratetype(page, migratetype);
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	/* update alloc, flag=1 for alloc, 0 for free, here 0 */
+	/* and zoneidx for DMA is 0, for normal is 1 */
+	if (zte_page_stats_in_working())
+		zte_page_stats_update(migratetype,
+			zoneidx, page, order, 0);
+#endif
 	free_one_page(page_zone(page), page, pfn, order, migratetype);
 	local_irq_restore(flags);
 }
@@ -853,19 +867,33 @@ bool is_cma_pageblock(struct page *page)
 {
 	return get_pageblock_migratetype(page) == MIGRATE_CMA;
 }
+EXPORT_SYMBOL(is_cma_pageblock);
 
+#ifdef CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV
+/* we extend this func to free reserved unmovable pageblocks. */
+void __init init_cma_reserved_pageblock(struct page *page,
+							int migratetype)
+#else
 /* Free whole pageblock and set its migration type to MIGRATE_CMA. */
 void __init init_cma_reserved_pageblock(struct page *page)
+#endif
 {
 	unsigned i = pageblock_nr_pages;
 	struct page *p = page;
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	enum zone_type zoneidx;
+#endif
 
 	do {
 		__ClearPageReserved(p);
 		set_page_count(p, 0);
 	} while (++p, --i);
 
+#ifdef CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV
+	set_pageblock_migratetype(page, migratetype);
+#else
 	set_pageblock_migratetype(page, MIGRATE_CMA);
+#endif
 
 	if (pageblock_order >= MAX_ORDER) {
 		i = pageblock_nr_pages;
@@ -880,6 +908,17 @@ void __init init_cma_reserved_pageblock(struct page *page)
 		__free_pages(page, pageblock_order);
 	}
 
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	if (zte_page_stats_in_working()) {
+		zoneidx = page_zonenum(page);
+		/* the above free is not user action, so adjust it */
+		/* in the reverse way. 1 for free adjustion */
+		/* of non-user free by alloc simulation, here 1 */
+		zte_page_stats_adjust(
+			get_pageblock_migratetype(page),
+			zoneidx, page, pageblock_order, 1);
+	}
+#endif
 	adjust_managed_page_count(page, pageblock_nr_pages);
 }
 #endif
@@ -1191,6 +1230,13 @@ static void steal_suitable_fallback(struct zone *zone, struct page *page,
 
 	/* Take ownership for orders >= pageblock_order */
 	if (current_order >= pageblock_order) {
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+		if (zte_page_stats_in_working())
+			zte_page_stats_move_freepages(zone,
+				1 << current_order,
+				start_type,
+				get_pageblock_migratetype(page));
+#endif
 		change_pageblock_range(page, current_order, start_type);
 		return;
 	}
@@ -1200,7 +1246,18 @@ static void steal_suitable_fallback(struct zone *zone, struct page *page,
 	/* Claim the whole block if over half of it is free */
 	if (pages >= (1 << (pageblock_order-1)) ||
 			page_group_by_mobility_disabled)
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	{
+		if (zte_page_stats_in_working())
+			zte_page_stats_move_freepages(zone,
+				1 << pageblock_order,
+				start_type,
+				get_pageblock_migratetype(page));
+#endif
 		set_pageblock_migratetype(page, start_type);
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	}
+#endif
 }
 
 /* Check whether there is a suitable fallback freepage with requested order. */
@@ -1559,6 +1616,9 @@ void free_hot_cold_page(struct page *page, bool cold)
 	unsigned long flags;
 	unsigned long pfn = page_to_pfn(page);
 	int migratetype;
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	enum zone_type zoneidx = page_zonenum(page);
+#endif
 
 	if (!free_pages_prepare(page, 0))
 		return;
@@ -1582,6 +1642,14 @@ void free_hot_cold_page(struct page *page, bool cold)
 		}
 		migratetype = MIGRATE_MOVABLE;
 	}
+
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	/* update alloc, flag=1 for alloc, 0 for free, here 0 */
+	/* and order=0, zoneidx for DMA is 0, for normal is 1 */
+	if (zte_page_stats_in_working())
+		zte_page_stats_update(migratetype,
+			zoneidx, page, 0, 0);
+#endif
 
 	pcp = &this_cpu_ptr(zone->pageset)->pcp;
 	if (!cold)
@@ -3066,6 +3134,14 @@ out:
 
 	if (page)
 		set_page_owner(page, order, gfp_mask);
+
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	/* update alloc, flag=1 for alloc, 0 for free, here 1 */
+	if (page && zte_page_stats_in_working())
+		zte_page_stats_update(
+			get_pageblock_migratetype(page),
+			high_zoneidx, page, order, 1);
+#endif
 
 	return page;
 }

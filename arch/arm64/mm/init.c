@@ -40,8 +40,17 @@
 #include <asm/sizes.h>
 #include <asm/tlb.h>
 #include <asm/alternative.h>
+#include <soc/qcom/vendor/sdlog_mem_reserve.h>
 
 #include "mm.h"
+
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+#include "../../../mm/page_zte_stat_ext.h"
+#endif
+
+#ifdef CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV
+#include "../../../mm/page_zte_mt_premov.h"
+#endif
 
 phys_addr_t memstart_addr __read_mostly = 0;
 
@@ -153,11 +162,15 @@ void __init arm64_memblock_init(void)
 #endif
 
 	early_init_fdt_scan_reserved_mem();
+	sdlog_memory_reserve();
 
 	/* 4GB maximum for 32-bit only capable devices */
 	if (IS_ENABLED(CONFIG_ZONE_DMA))
 		dma_phys_limit = max_zone_dma_phys();
 	dma_contiguous_reserve(dma_phys_limit);
+#ifdef CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV
+	pzmp_contiguous_reserve();
+#endif
 
 	memblock_allow_resize();
 	memblock_dump_all();
@@ -260,7 +273,12 @@ static void __init free_unused_memmap(void)
  */
 void __init mem_init(void)
 {
-	set_max_mapnr(pfn_to_page(max_pfn) - mem_map);
+	/* zte add to avoid null ptr participate in calculation,
+	  * which may get unexpected result */
+	if (mem_map == NULL)
+		set_max_mapnr((unsigned long)pfn_to_page(max_pfn));
+	else
+		set_max_mapnr(pfn_to_page(max_pfn) - mem_map);
 
 #ifndef CONFIG_SPARSEMEM_VMEMMAP
 	free_unused_memmap();
@@ -331,6 +349,12 @@ void __init mem_init(void)
 		 */
 		sysctl_overcommit_memory = OVERCOMMIT_ALWAYS;
 	}
+
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	pr_notice("page_zte_stat cur ram %lu, %ld\n", totalram_pages,
+		global_page_state(NR_FREE_PAGES));
+	zte_page_stats_init();
+#endif
 }
 
 static inline void poison_init_mem(void *s, size_t count)

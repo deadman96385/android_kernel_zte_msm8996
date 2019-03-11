@@ -386,6 +386,11 @@ static void msm_add_sd_in_position(struct msm_sd_subdev *msm_subdev,
 	struct msm_sd_subdev *temp_sd;
 
 	list_for_each_entry(temp_sd, sd_list, list) {
+		if (temp_sd == msm_subdev) {
+			pr_err("%s :Fail to add the same sd %d\n",
+				__func__, __LINE__);
+			return;
+		}
 		if (msm_subdev->close_seq < temp_sd->close_seq) {
 			list_add_tail(&msm_subdev->list, &temp_sd->list);
 			return;
@@ -703,6 +708,29 @@ static int __msm_close_wakeup_all_cmdack_session(void *d1, void *d2)
 	return 0;
 }
 
+/*
+  * recovery camera preview after camera sensor is died
+  *
+  * by ZTE_YCM_20160530 yi.changming 400267
+  */
+// --->
+static int __msm_recovery_session_notify_hal(void *d1, void *d2)
+{
+	struct v4l2_event event;
+	struct msm_v4l2_event_data *event_data =
+		(struct msm_v4l2_event_data *)&event.u.data[0];
+	struct msm_session *session = d1;
+
+	event.type = MSM_CAMERA_V4L2_EVENT_TYPE;
+	event.id   = MSM_CAMERA_MSM_NOTIFY;
+	event_data->command = MSM_CAMERA_PRIV_RECOVERY;
+
+	v4l2_event_queue(session->event_q.vdev, &event);
+
+	return 0;
+}
+// <---400267
+
 static long msm_private_ioctl(struct file *file, void *fh,
 	bool valid_prio, unsigned int cmd, void *arg)
 {
@@ -805,6 +833,19 @@ static long msm_private_ioctl(struct file *file, void *fh,
 			struct msm_session, list,
 			__msm_close_destry_session_notify_apps, NULL);
 		break;
+/*
+  * recovery camera preview after camera sensor is died
+  *
+  * by ZTE_YCM_20160530 yi.changming 400267
+  */
+// --->
+	case MSM_CAM_V4L2_IOCTL_NOTIFY_RECOVERY:
+		/* send v4l2_event to HAL next*/
+		msm_queue_traverse_action(msm_session_q,
+			struct msm_session, list,
+			__msm_recovery_session_notify_hal, NULL);
+		break;
+// <---400267
 
 	default:
 		rc = -ENOTTY;

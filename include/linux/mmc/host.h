@@ -326,6 +326,7 @@ struct mmc_devfeq_clk_scaling {
 	u32		skip_clk_scale_freq_update;
 	int		freq_table_sz;
 	u32		*freq_table;
+	u32		*host_freq_table;
 	unsigned long	total_busy_time_us;
 	unsigned long	target_freq;
 	unsigned long	curr_freq;
@@ -501,6 +502,8 @@ struct mmc_host {
 	unsigned int		bus_resume_flags;
 #define MMC_BUSRESUME_MANUAL_RESUME	(1 << 0)
 #define MMC_BUSRESUME_NEEDS_RESUME	(1 << 1)
+	bool ignore_bus_resume_flags;
+	bool is_bad_card;
 
 	unsigned int		sdio_irqs;
 	struct task_struct	*sdio_irq_thread;
@@ -573,6 +576,12 @@ struct mmc_host {
 	 */
 	void *cmdq_private;
 	struct mmc_request	*err_mrq;
+
+	/* ZTE_modify add voltage compliant for ssx1207 begin */
+	#ifdef CONFIG_MMC_SSX1207
+	bool ssx1207_flag;
+	#endif
+	/* ZTE_modify end */
 	unsigned long		private[0] ____cacheline_aligned;
 };
 

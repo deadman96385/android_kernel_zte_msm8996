@@ -25,6 +25,10 @@
 
 #include "internal.h"
 
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+#include "page_zte_stat_ext.h"
+#endif
+
 #ifdef CONFIG_VM_EVENT_COUNTERS
 DEFINE_PER_CPU(struct vm_event_state, vm_event_states) = {{0}};
 EXPORT_PER_CPU_SYMBOL(vm_event_states);
@@ -950,6 +954,9 @@ static void pagetypeinfo_showfree_print(struct seq_file *m,
 			list_for_each(curr, &area->free_list[mtype])
 				freecount++;
 			seq_printf(m, "%6lu ", freecount);
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+			zte_page_stats_gl_add(freecount << order);
+#endif
 		}
 		seq_putc(m, '\n');
 	}
@@ -967,7 +974,14 @@ static int pagetypeinfo_showfree(struct seq_file *m, void *arg)
 		seq_printf(m, "%6d ", order);
 	seq_putc(m, '\n');
 
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	zte_page_stats_gl_reset();
+#endif
 	walk_zones_in_node(m, pgdat, pagetypeinfo_showfree_print);
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	seq_printf(m, "total pages in buddy: %ld\n",
+		zte_page_stats_gl_get());
+#endif
 
 	return 0;
 }
@@ -1133,6 +1147,10 @@ static int pagetypeinfo_show(struct seq_file *m, void *arg)
 	pagetypeinfo_showfree(m, pgdat);
 	pagetypeinfo_showblockcount(m, pgdat);
 	pagetypeinfo_showmixedcount(m, pgdat);
+#ifdef CONFIG_PAGE_ZTE_STAT_EXT
+	/* print the page zte stats info at the end of pagetypeinfo*/
+	zte_page_stats_info_print(m);
+#endif
 
 	return 0;
 }

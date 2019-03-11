@@ -40,6 +40,10 @@
 
 #include "cma.h"
 
+#ifdef CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV
+#include "page_zte_mt_premov.h"
+#endif
+
 struct cma cma_areas[MAX_CMA_AREAS];
 unsigned cma_area_count;
 static DEFINE_MUTEX(cma_mutex);
@@ -85,7 +89,12 @@ static int __init cma_activate_area(struct cma *cma)
 	unsigned long base_pfn = cma->base_pfn, pfn = base_pfn;
 	unsigned i = cma->count >> pageblock_order;
 	struct zone *zone;
+#ifdef CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV
+	/* for specific cma, we used as unmovable purposes */
+	int migratetype = pzmp_get_cma_migratetype(cma);
 
+	pr_info("active cma %p count %d to mt=%d\n", cma, i, migratetype);
+#endif
 	cma->bitmap = kzalloc(bitmap_size, GFP_KERNEL);
 
 	if (!cma->bitmap)
@@ -109,7 +118,12 @@ static int __init cma_activate_area(struct cma *cma)
 			if (page_zone(pfn_to_page(pfn)) != zone)
 				goto err;
 		}
+#ifdef CONFIG_PAGE_ZTE_MIGRATETYPE_PREMOV
+		init_cma_reserved_pageblock(pfn_to_page(base_pfn),
+			migratetype);
+#else
 		init_cma_reserved_pageblock(pfn_to_page(base_pfn));
+#endif
 	} while (--i);
 
 	mutex_init(&cma->lock);

@@ -997,6 +997,8 @@ static irqreturn_t qpnp_wled_sc_irq(int irq, void *_wled)
 	return IRQ_HANDLED;
 }
 
+
+
 /* Configure WLED registers */
 static int qpnp_wled_config(struct qpnp_wled *wled)
 {
@@ -1440,7 +1442,22 @@ static int qpnp_wled_config(struct qpnp_wled *wled)
 
 	return 0;
 }
+#ifdef CONFIG_BOARD_FUJISAN
+struct qpnp_wled *g_wled = NULL;
 
+void qpnp_wled_enable_cabc(int en_cabc)
+{
+	u8 reg = 0;
+
+	reg &= QPNP_WLED_MODULE_EN_MASK;
+	reg |= (en_cabc << QPNP_WLED_MODULE_EN_SHIFT);
+	qpnp_wled_write_reg(g_wled, &reg,
+			QPNP_WLED_MODULE_EN_REG(g_wled->ctrl_base));
+
+	pr_info("%s: cabc %d\n", __func__, en_cabc);
+}
+EXPORT_SYMBOL_GPL(qpnp_wled_enable_cabc);
+#endif
 /* parse wled dtsi parameters */
 static int qpnp_wled_parse_dt(struct qpnp_wled *wled)
 {
@@ -1760,7 +1777,9 @@ static int qpnp_wled_probe(struct spmi_device *spmi)
 			goto sysfs_fail;
 		}
 	}
-
+#ifdef CONFIG_BOARD_FUJISAN
+	g_wled = wled;
+#endif
 	return 0;
 
 sysfs_fail:

@@ -872,6 +872,9 @@ static int scsi_add_lun(struct scsi_device *sdev, unsigned char *inq_result,
 	    !(*bflags & BLIST_NOTQ))
 		sdev->tagged_supported = 1;
 
+	if (*bflags & BLIST_WAIT_MEDIA)
+		sdev->wait_media = 1;
+
 	/*
 	 * Some devices (Texel CD ROM drives) have handshaking problems
 	 * when used with the Seagate controllers. borken is initialized

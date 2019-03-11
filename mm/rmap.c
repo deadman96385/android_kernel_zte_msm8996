@@ -402,7 +402,9 @@ void unlink_anon_vmas(struct vm_area_struct *vma)
 	 */
 	list_for_each_entry_safe(avc, next, &vma->anon_vma_chain, same_vma) {
 		struct anon_vma *anon_vma = avc->anon_vma;
-
+		if (anon_vma->degree) {
+			pr_err("unlink_anon_vmas: vma:0x%p, avc:0x%p\n", vma, avc);
+		}
 		BUG_ON(anon_vma->degree);
 		put_anon_vma(anon_vma);
 

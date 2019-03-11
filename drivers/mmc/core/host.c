@@ -749,10 +749,23 @@ static DEVICE_ATTR(perf, S_IRUGO | S_IWUSR,
 
 #endif
 
+static ssize_t
+show_caps(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct mmc_host *host = cls_dev_to_mmc_host(dev);
+
+	return snprintf(buf, PAGE_SIZE, "caps  : 0x%08x\n"
+					"caps2 : 0x%08x\n",
+					host->caps, host->caps2);
+}
+
+static DEVICE_ATTR(caps, S_IRUSR, show_caps, NULL);
+
 static struct attribute *dev_attrs[] = {
 #ifdef CONFIG_MMC_PERF_PROFILING
 	&dev_attr_perf.attr,
 #endif
+	&dev_attr_caps.attr,
 	NULL,
 };
 static struct attribute_group dev_attr_grp = {

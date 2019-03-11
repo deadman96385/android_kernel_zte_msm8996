@@ -25,6 +25,10 @@
 #include <linux/vmalloc.h>
 #include "ion_priv.h"
 
+#ifdef CONFIG_ION_ZTE_FRAGMENT_OPT
+#include "ion_zte_fragment_opt_priv.h"
+#endif
+
 static void *ion_page_pool_alloc_pages(struct ion_page_pool *pool)
 {
 	struct page *page;
@@ -188,8 +192,15 @@ int ion_page_pool_total(struct ion_page_pool *pool, bool high)
 	return count << pool->order;
 }
 
+#ifdef CONFIG_ION_ZTE_DEDICATED_PAGE_BLOCK
+/* add reserve_count to reserve order items when shrink */
+/* if zero, then keep process unchanged, or do dedi reserved */
+int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
+			 int nr_to_scan, int reserve_count)
+#else
 int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 				int nr_to_scan)
+#endif
 {
 	int freed = 0;
 	bool high;
@@ -199,13 +210,45 @@ int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 	else
 		high = !!(gfp_mask & __GFP_HIGHMEM);
 
+#ifdef CONFIG_ION_ZTE_DEDICATED_PAGE_BLOCK
+	if (nr_to_scan == 0) {
+		int cur_pages = ion_page_pool_total(pool, high);
+
+		if (reserve_count > 0) { /* need dedi reserved */
+			int reserve_pages = reserve_count << pool->order;
+
+			if (cur_pages > reserve_pages)
+				return cur_pages - reserve_pages;
+			else
+				return 0; /* no page will be released */
+		} else /* unchanged process as original one */
+			return cur_pages;
+	}
+#else
 	if (nr_to_scan == 0)
 		return ion_page_pool_total(pool, high);
+#endif
 
 	while (freed < nr_to_scan) {
 		struct page *page;
 
 		mutex_lock(&pool->mutex);
+#ifdef CONFIG_ION_ZTE_DEDICATED_PAGE_BLOCK
+		if (reserve_count > 0) /* need dedi reserved */
+			if (pool->low_count + pool->high_count
+				<= reserve_count) {
+				if (zte_ion_sys_debug_shrink())
+					pr_info("zte_ion_dbg prevent %d, pages (%d, %d), rsv=%d, cur=%d\n",
+						pool->order,
+						nr_to_scan,
+						freed,
+						reserve_count,
+						pool->low_count +
+						pool->high_count);
+				mutex_unlock(&pool->mutex);
+				break;
+			}
+#endif
 		if (pool->low_count) {
 			page = ion_page_pool_remove(pool, false, false);
 		} else if (high && pool->high_count) {

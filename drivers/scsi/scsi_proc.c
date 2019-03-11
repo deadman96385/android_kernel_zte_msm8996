@@ -26,6 +26,8 @@
 #include <linux/seq_file.h>
 #include <linux/mutex.h>
 #include <linux/gfp.h>
+#include <linux/of.h>
+#include <linux/of_address.h>
 #include <asm/uaccess.h>
 
 #include <scsi/scsi.h>
@@ -35,6 +37,7 @@
 
 #include "scsi_priv.h"
 #include "scsi_logging.h"
+#include "ddr_info.h"
 
 
 /* 4K page size, but our output routines, use some slack for overruns */
@@ -393,6 +396,7 @@ static void *scsi_seq_start(struct seq_file *sfile, loff_t *pos)
 			break;
 		sfile->private++;
 	}
+
 	return dev;
 }
 
@@ -448,12 +452,194 @@ static const struct file_operations proc_scsi_operations = {
 	.release	= seq_release,
 };
 
+static int proc_print_emmc_id(struct device *dev, void *data)
+{
+
+	struct scsi_device *sdev;
+	struct seq_file *s = data;
+
+	int logical_block_size = 4096; //fixme...
+
+	u64 capacity_512 = 0;
+
+	if (!scsi_is_sdev_device(dev))
+		goto out;
+
+	sdev = to_scsi_device(dev);
+
+	if (sdev->host->hostt->device_capacity) {
+	    capacity_512 = sdev->host->hostt->device_capacity(sdev);
+	}
+
+	if (sdev->lun == 0) {
+	    seq_printf(s, "Memory Type: UFS (  %s)\n"
+		     "Logical Block Size (bytes): %d\n"
+		     "Size (kB): %llu\n"
+		     "Manufacture: %.8s\n"
+		     "Product Name: %.15s\n",
+		     scsi_device_type(sdev->type),
+		     logical_block_size,
+		     (u64)(capacity_512 * 512 / 1024),
+		     sdev->vendor,
+		     sdev->model);
+	}
+out:
+      return 0;
+}
+
+static int proc_emmc_id_show(struct seq_file *sfile, void *dev)
+{
+	return proc_print_emmc_id(dev, sfile);
+}
+
+static const struct seq_operations proc_emmc_id_ops = {
+	.start	= scsi_seq_start,
+	.next	= scsi_seq_next,
+	.stop	= scsi_seq_stop,
+	.show	= proc_emmc_id_show
+};
+
+static int proc_emmc_id_open(struct inode *inode, struct file *file)
+{
+	/*
+	 * We don't really need this for the write case but it doesn't
+	 * harm either.
+	 */
+	return seq_open(file, &proc_emmc_id_ops);
+}
+
+static const struct file_operations proc_emmc_id_operations = {
+	.owner		= THIS_MODULE,
+	.open		= proc_emmc_id_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= seq_release,
+};
+
+static int  ddr_info_parse_dt(const char *data)
+{
+	struct device_node *np;
+	void *ddr_info_addr;
+	uint32_t  ddr_info = 0;
+
+	np = of_find_compatible_node(NULL, NULL, data);
+	if (!np) {
+		pr_err("unable to find DT imem %s node\n", data);
+	} else {
+		ddr_info_addr = of_iomap(np, 0);
+		if (!ddr_info_addr) {
+			pr_err("unable to map imem %s offset\n", data);
+		} else {
+			ddr_info = __raw_readl(ddr_info_addr);
+			pr_err("%s: 0x%x\n", data, ddr_info);
+		}
+	}
+	return ddr_info;
+}
+
+static int ddr_id_read_proc(struct seq_file *m, void *v)
+{
+	char *manufacture_name_pointer = NULL;
+	char *device_type_pointer = NULL;
+	uint32_t ddr_size = 0;
+
+	switch (ddr_info_parse_dt("qcom,msm-imem-ddr_memory_manufacture")) {
+	case SAMSUNG:
+		manufacture_name_pointer = "SAMSUNG";
+		break;
+	case QIMONDA:
+		manufacture_name_pointer = "QIMONDA";
+		break;
+	case ELPIDA:
+		manufacture_name_pointer = "ELPIDA";
+		break;
+	case ETRON:
+		manufacture_name_pointer = "ETRON";
+	case NANYA:
+		manufacture_name_pointer = "NANYA";
+		break;
+	case HYNIX:
+		manufacture_name_pointer = "HYNIX";
+		break;
+	case MOSEL:
+		manufacture_name_pointer = "MOSEL";
+		break;
+	case WINBOND:
+		manufacture_name_pointer = "WINBOND";
+		break;
+	case ESMT:
+		manufacture_name_pointer = "ESMT";
+		break;
+	case SPANSION:
+		manufacture_name_pointer = "SPANSION";
+		break;
+	case SST:
+		manufacture_name_pointer = "SST";
+		break;
+	case ZMOS:
+		manufacture_name_pointer = "ZMOS";
+		break;
+	case INTEL:
+		manufacture_name_pointer = "INTEL";
+		break;
+	case NUMONYX:
+		manufacture_name_pointer = "NUMONYX";
+		break;
+	case MICRON:
+		manufacture_name_pointer = "MICRON";
+		break;
+	default:
+		manufacture_name_pointer = "UNKNOWN";
+	}
+
+	ddr_size = ddr_info_parse_dt("qcom,msm-imem-ddr_memory_size");
+
+	switch (ddr_info_parse_dt("qcom,msm-imem-ddr_memory_type")) {
+	case DDR_TYPE_LPDDR1:
+		device_type_pointer = "LPDDR1";
+		break;
+	case DDR_TYPE_LPDDR2:
+		device_type_pointer = "LPDDR2";
+		break;
+	case DDR_TYPE_PCDDR2:
+		device_type_pointer = "PCDDR3";
+		break;
+	case DDR_TYPE_PCDDR3:
+		device_type_pointer = "PCDDR4";
+		break;
+	case DDR_TYPE_LPDDR3:
+		device_type_pointer = "LPDDR3";
+		break;
+	case DDR_TYPE_LPDDR4:
+		device_type_pointer = "LPDDR4";
+		break;
+	default:
+		device_type_pointer = "UNKNOWN";
+	}
+	return seq_printf(m, "%s-NA-NA-%dG-%s\n",
+		manufacture_name_pointer, ddr_size, device_type_pointer);
+}
+
+static int ddr_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, ddr_id_read_proc, NULL);
+}
+
+static const struct file_operations ddr_proc_fops = {
+	.open		= ddr_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
 /**
  * scsi_init_procfs - create scsi and scsi/scsi in procfs
  */
 int __init scsi_init_procfs(void)
 {
 	struct proc_dir_entry *pde;
+	struct proc_dir_entry *p;
+	struct proc_dir_entry *q;
 
 	proc_scsi = proc_mkdir("scsi", NULL);
 	if (!proc_scsi)
@@ -463,8 +649,20 @@ int __init scsi_init_procfs(void)
 	if (!pde)
 		goto err2;
 
+	p = proc_create("driver/emmc_id", 0, NULL, &proc_emmc_id_operations);
+	if (!p)
+		goto err3;
+
+	q = proc_create("driver/ddr_id", S_IWUGO | S_IRUGO, NULL, &ddr_proc_fops);
+	if (!q)
+		goto err4;
+
 	return 0;
 
+err4:
+	remove_proc_entry("driver/emmc_id", NULL);
+err3:
+	remove_proc_entry("scsi/scsi", NULL);
 err2:
 	remove_proc_entry("scsi", NULL);
 err1:
@@ -478,4 +676,6 @@ void scsi_exit_procfs(void)
 {
 	remove_proc_entry("scsi/scsi", NULL);
 	remove_proc_entry("scsi", NULL);
+	remove_proc_entry("driver/emmc_id", NULL);
+	remove_proc_entry("driver/ddr_id", NULL);
 }

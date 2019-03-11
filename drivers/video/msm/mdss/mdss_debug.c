@@ -1067,10 +1067,12 @@ static ssize_t mdss_debug_perf_bw_limit_read(struct file *file,
 				temp_settings->mdss_max_bw_mode,
 					temp_settings->mdss_max_bw_val);
 		temp_settings++;
+
+		if (len < 0 || len >= sizeof(buf))
+			return 0;
 	}
 
-	if (len < 0 || len >= sizeof(buf))
-		return 0;
+
 
 	if ((count < sizeof(buf)) || copy_to_user(buff, buf, len))
 		return -EFAULT;

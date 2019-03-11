@@ -73,8 +73,13 @@ module_param(use_spi_crc, bool, 0);
 /*
  * Internal function. Schedule delayed work in the MMC work queue.
  */
+#ifdef CONFIG_MMC_SSX1207
+int mmc_schedule_delayed_work(struct delayed_work *work,
+				     unsigned long delay)
+#else
 static int mmc_schedule_delayed_work(struct delayed_work *work,
 				     unsigned long delay)
+#endif
 {
 	return queue_delayed_work(workqueue, work, delay);
 }
@@ -389,16 +394,16 @@ int mmc_clk_update_freq(struct mmc_host *host,
 	/* make sure the card supports the frequency we want */
 	if (unlikely(freq > host->card->clk_scaling_highest)) {
 		freq = host->card->clk_scaling_highest;
-		pr_warn("%s: %s: frequency was overridden to %lu\n",
+		pr_warn("%s: %s: frequency %lu was overridden to %lu\n",
 				mmc_hostname(host), __func__,
-				host->card->clk_scaling_highest);
+				freq, host->card->clk_scaling_highest);
 	}
 
 	if (unlikely(freq < host->card->clk_scaling_lowest)) {
 		freq = host->card->clk_scaling_lowest;
-		pr_warn("%s: %s: frequency was overridden to %lu\n",
+		pr_warn("%s: %s: frequency %lu was overridden to %lu\n",
 			mmc_hostname(host), __func__,
-			host->card->clk_scaling_lowest);
+			freq, host->card->clk_scaling_lowest);
 	}
 
 	if (freq == host->clk_scaling.curr_freq)
@@ -577,12 +582,12 @@ static int mmc_devfreq_create_freq_table(struct mmc_host *host)
 	int i;
 	struct mmc_devfeq_clk_scaling *clk_scaling = &host->clk_scaling;
 
-	pr_debug("%s: supported: lowest=%lu, highest=%lu\n",
+	pr_info("%s: supported: lowest=%lu, highest=%lu\n",
 		mmc_hostname(host),
 		host->card->clk_scaling_lowest,
 		host->card->clk_scaling_highest);
 
-	if (!clk_scaling->freq_table) {
+	if (!clk_scaling->freq_table && !clk_scaling->host_freq_table) {
 		pr_debug("%s: no frequency table defined -  setting default\n",
 			mmc_hostname(host));
 		clk_scaling->freq_table = kzalloc(
@@ -593,6 +598,18 @@ static int mmc_devfreq_create_freq_table(struct mmc_host *host)
 		clk_scaling->freq_table[1] = host->card->clk_scaling_highest;
 		clk_scaling->freq_table_sz = 2;
 		goto out;
+	}
+
+	if (clk_scaling->host_freq_table) {
+		if (!clk_scaling->freq_table) {
+			clk_scaling->freq_table = kzalloc(
+				clk_scaling->freq_table_sz*sizeof(*(clk_scaling->freq_table)), GFP_KERNEL);
+			if (!clk_scaling->freq_table)
+				return -ENOMEM;
+		}
+
+		memcpy(clk_scaling->freq_table, clk_scaling->host_freq_table,
+				clk_scaling->freq_table_sz*sizeof(*(clk_scaling->freq_table)));
 	}
 
 	if (host->card->clk_scaling_lowest >
@@ -2005,6 +2022,38 @@ int __mmc_claim_host(struct mmc_host *host, atomic_t *abort)
 EXPORT_SYMBOL(__mmc_claim_host);
 
 /**
+ *     mmc_try_claim_host - try exclusively to claim a host
+ *        and keep trying for given time, with a gap of 10ms
+ *     @host: mmc host to claim
+ *     @dealy_ms: delay in ms
+ *
+ *     Returns %1 if the host is claimed, %0 otherwise.
+ */
+int mmc_try_claim_host(struct mmc_host *host, unsigned int delay_ms)
+{
+	int claimed_host = 0;
+	unsigned long flags;
+	int retry_cnt = delay_ms/10;
+
+	do {
+		spin_lock_irqsave(&host->lock, flags);
+		if (!host->claimed || host->claimer == current) {
+			host->claimed = 1;
+			host->claimer = current;
+			host->claim_cnt += 1;
+			claimed_host = 1;
+		}
+		spin_unlock_irqrestore(&host->lock, flags);
+		if (!claimed_host)
+			mmc_delay(10);
+	} while (!claimed_host && retry_cnt--);
+	if (host->ops->enable && claimed_host && host->claim_cnt == 1)
+		host->ops->enable(host);
+	return claimed_host;
+}
+EXPORT_SYMBOL(mmc_try_claim_host);
+
+/**
  *	mmc_release_host - release a host
  *	@host: mmc host to release
  *
@@ -2048,6 +2097,29 @@ void mmc_get_card(struct mmc_card *card)
 }
 EXPORT_SYMBOL(mmc_get_card);
 
+/*
+ * This is a helper function, which fetches a runtime pm reference for the
+ * card device and also tries to claims the host within specified time.
+ *     @card: card device to claim host
+ *     @dealy_ms: delay in ms
+ *
+ *     Returns %0 if the host is claimed, %1 otherwise.
+ */
+int mmc_try_get_card(struct mmc_card *card, unsigned int delay_ms)
+{
+	pm_runtime_get_sync(&card->dev);
+	if (!mmc_try_claim_host(card->host, delay_ms)) {
+		pm_runtime_mark_last_busy(&card->dev);
+		pm_runtime_put_autosuspend(&card->dev);
+		return -EAGAIN;
+	}
+#ifdef CONFIG_MMC_BLOCK_DEFERRED_RESUME
+	if (mmc_bus_needs_resume(card->host))
+		mmc_resume_bus(card->host);
+#endif
+	return 0;
+}
+EXPORT_SYMBOL(mmc_try_get_card);
 
 /*
  * This is a helper function, which releases the host and drops the runtime
@@ -2870,6 +2942,17 @@ static void _mmc_detect_change(struct mmc_host *host, unsigned long delay,
 		pm_wakeup_event(mmc_dev(host), 5000);
 
 	host->detect_change = 1;
+
+	/*
+	 * Change in cd_gpio state, so make sure detection part is
+	 * not overided because of manual resume.
+	 */
+	if (cd_irq && mmc_bus_manual_resume(host))
+		host->ignore_bus_resume_flags = true;
+
+	if (cd_irq)
+		host->is_bad_card = false;
+
 	mmc_schedule_delayed_work(&host->detect, delay);
 }
 
@@ -3790,6 +3873,8 @@ void mmc_rescan(struct work_struct *work)
 		host->bus_ops->detect(host);
 
 	host->detect_change = 0;
+	if (host->ignore_bus_resume_flags)
+		host->ignore_bus_resume_flags = false;
 
 	/*
 	 * Let mmc_bus_put() free the bus/bus_ops if we've found that
@@ -4043,12 +4128,13 @@ int mmc_pm_notify(struct notifier_block *notify_block,
 
 		spin_lock_irqsave(&host->lock, flags);
 		host->rescan_disable = 0;
-		if (mmc_bus_manual_resume(host)) {
+		if ((mmc_bus_manual_resume(host) &&
+				!host->ignore_bus_resume_flags) || host->is_bad_card) {
 			spin_unlock_irqrestore(&host->lock, flags);
 			break;
 		}
 		spin_unlock_irqrestore(&host->lock, flags);
-		_mmc_detect_change(host, 0, false);
+		_mmc_detect_change(host, msecs_to_jiffies(500), false);
 
 	}
 

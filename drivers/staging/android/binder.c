@@ -1059,6 +1059,7 @@ static struct binder_ref *binder_get_ref_for_node(struct binder_proc *proc,
 	}
 
 	p = &proc->refs_by_desc.rb_node;
+	mb();/* Order bit clearing and data access. */
 	while (*p) {
 		parent = *p;
 		ref = rb_entry(parent, struct binder_ref, rb_node_desc);

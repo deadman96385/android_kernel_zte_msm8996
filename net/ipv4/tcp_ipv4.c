@@ -1606,6 +1606,7 @@ int tcp_v4_rcv(struct sk_buff *skb)
 	const struct tcphdr *th;
 	struct sock *sk;
 	int ret;
+	char stmp[50];
 	struct net *net = dev_net(skb->dev);
 
 	if (skb->pkt_type != PACKET_HOST)
@@ -1692,6 +1693,21 @@ process:
 	if (!sock_owned_by_user(sk)) {
 		if (!tcp_prequeue(sk, skb))
 			ret = tcp_v4_do_rcv(sk, skb);
+/*ZTE_LC_TCP_DEBUG, 20170417 improved */
+		if (tcp_socket_debugfs & 0x00000001) {
+			if (strcmp(inet_ntop(AF_INET, &iph->saddr, stmp, sizeof(stmp)), "127.0.0.1")) {
+				kuid_t uid = sock_i_uid(sk);
+
+				pr_info("[IP] TCP RCV len = %hu uid=%d, "
+					"Gpid:%d (%s) [%d (%s)] (%pI4:%hu <- %pI4:%hu)\n",
+					ntohs(iph->tot_len),
+					uid.val,
+					current->group_leader->pid, current->group_leader->comm,
+					current->pid, current->comm,
+					&iph->daddr, ntohs(th->dest),
+					&iph->saddr, ntohs(th->source));
+			}
+		}
 	} else if (unlikely(sk_add_backlog(sk, skb,
 					   sk->sk_rcvbuf + sk->sk_sndbuf))) {
 		bh_unlock_sock(sk);

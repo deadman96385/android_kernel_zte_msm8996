@@ -31,7 +31,7 @@
 #define MAX_CURRENT_MEDIUM     1500
 #define MAX_CURRENT_HIGH       3000
 
-#define TIUSB_1P8_VOL_MAX	1800000 /* uV */
+#define TIUSB_2P8_VOL_MAX	2800000 /* uV */
 
 #define TI_INTS_ATTACH_MASK	(0xC0)   /* current attach state interrupt */
 #define TI_ATTACH_TO_DFP	0x2	 /* configured as UFP attaches to DFP */
@@ -39,6 +39,8 @@
 #define TI_STS_8_REG		0x8
 #define TI_STS_9_REG		0x9
 #define TI_INTS_STATUS		BIT(4)
+
+#define STANDUP_TIME_DELAY_MS 120
 
 static bool disable_on_suspend;
 module_param(disable_on_suspend , bool, S_IRUGO | S_IWUSR);
@@ -195,7 +197,7 @@ static int tiusb_ldo_init(struct ti_usb_type_c *ti, bool init)
 	int rc = 0;
 
 	if (!init) {
-		regulator_set_voltage(ti->i2c_1p8, 0, TIUSB_1P8_VOL_MAX);
+		regulator_set_voltage(ti->i2c_1p8, 0, TIUSB_2P8_VOL_MAX);
 		rc = regulator_disable(ti->i2c_1p8);
 		return rc;
 	}
@@ -206,8 +208,8 @@ static int tiusb_ldo_init(struct ti_usb_type_c *ti, bool init)
 		dev_err(&ti->client->dev, "unable to get 1p8(%d)\n", rc);
 		return rc;
 	}
-	rc = regulator_set_voltage(ti->i2c_1p8, TIUSB_1P8_VOL_MAX,
-					TIUSB_1P8_VOL_MAX);
+	rc = regulator_set_voltage(ti->i2c_1p8, TIUSB_2P8_VOL_MAX,
+					TIUSB_2P8_VOL_MAX);
 	if (rc) {
 		dev_err(&ti->client->dev, "unable to set voltage(%d)\n", rc);
 		goto put_1p8;
@@ -222,7 +224,7 @@ static int tiusb_ldo_init(struct ti_usb_type_c *ti, bool init)
 	return 0;
 
 put_1p8:
-	regulator_set_voltage(ti->i2c_1p8, 0, TIUSB_1P8_VOL_MAX);
+	regulator_set_voltage(ti->i2c_1p8, 0, TIUSB_2P8_VOL_MAX);
 	return rc;
 }
 
@@ -274,6 +276,9 @@ static int tiusb_probe(struct i2c_client *i2c, const struct i2c_device_id *id)
 		dev_err(&ti_usb->client->dev, "i2c ldo init failed\n");
 		goto gpio_disable;
 	}
+
+	/* ZTE_modify add stand-up time more than 100ms */
+	msleep(STANDUP_TIME_DELAY_MS);
 
 	ret = tiusb_read_regdata(i2c);
 	if (ret == -EIO) {
@@ -331,7 +336,7 @@ static int tiusb_i2c_suspend(struct device *dev)
 	if (ti->attach_state)
 		return 0;
 
-	regulator_set_voltage(ti->i2c_1p8, 0, TIUSB_1P8_VOL_MAX);
+	regulator_set_voltage(ti->i2c_1p8, 0, TIUSB_2P8_VOL_MAX);
 	regulator_disable(ti->i2c_1p8);
 
 	if (disable_on_suspend)
@@ -358,8 +363,8 @@ static int tiusb_i2c_resume(struct device *dev)
 		msleep(TI_I2C_DELAY_MS);
 	}
 
-	rc = regulator_set_voltage(ti->i2c_1p8, TIUSB_1P8_VOL_MAX,
-					TIUSB_1P8_VOL_MAX);
+	rc = regulator_set_voltage(ti->i2c_1p8, TIUSB_2P8_VOL_MAX,
+					TIUSB_2P8_VOL_MAX);
 	if (rc)
 		dev_err(&ti->client->dev, "unable to set voltage(%d)\n", rc);
 

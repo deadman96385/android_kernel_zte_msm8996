@@ -1648,8 +1648,8 @@ static int mdss_dsi_cmds2buf_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 				len = mdss_dsi_cmd_dma_tx(ctrl, tp);
 			if (IS_ERR_VALUE(len)) {
 				mdss_dsi_disable_irq(ctrl, DSI_CMD_TERM);
-				pr_err("%s: failed to call cmd_dma_tx for cmd = 0x%x\n",
-					__func__,  cm->payload[0]);
+				pr_err("%s: ctrl->ndx=%d failed to call cmd_dma_tx for cmd = 0x%x\n",
+					__func__, ctrl->ndx, cm->payload[0]);
 				return 0;
 			}
 			pr_debug("%s: cmd_dma_tx for cmd = 0x%x, len = %d\n",
@@ -1742,7 +1742,7 @@ do_send:
 
 	len = mdss_dsi_cmds2buf_tx(ctrl, cmds, cnt, use_dma_tpg);
 	if (!len)
-		pr_err("%s: failed to call\n", __func__);
+		pr_err("%s: ctrl->ndx=%d failed to call\n", __func__, ctrl->ndx);
 
 	if (!ctrl->do_unicast) {
 		if (mctrl && mctrl->cmd_cfg_restore) {
@@ -2013,6 +2013,58 @@ end:
 	return rp->read_cnt;
 }
 
+static inline bool mdss_dsi_delay_cmd(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	unsigned long flags;
+	bool mdp_busy = false;
+	bool need_wait = false;
+	bool mdp_tx_start = false;
+	struct mdss_dsi_ctrl_pdata *mctrl = NULL;
+
+	if (!ctrl->mdp_callback)
+		goto exit;
+
+	/* delay only for split dsi, cmd mode and burst mode enabled cases */
+	if (!mdss_dsi_is_hw_config_split(ctrl->shared_data) ||
+		!(ctrl->panel_mode == DSI_CMD_MODE) ||
+		!ctrl->burst_mode_enabled)
+		goto exit;
+
+	/* delay only if cmd is not from mdp and panel has been initialized */
+	if (ctrl->is_cmdlist_from_mdp ||
+		!(ctrl->ctrl_state & CTRL_STATE_PANEL_INIT))
+		goto exit;
+
+	/* if broadcast enabled, apply delay only if this is the ctrl trigger */
+	if (mdss_dsi_sync_wait_enable(ctrl) &&
+		!mdss_dsi_sync_wait_trigger(ctrl))
+		goto exit;
+
+	spin_lock_irqsave(&ctrl->mdp_lock, flags);
+	if (ctrl->mdp_busy == true)
+		mdp_busy = true;
+	spin_unlock_irqrestore(&ctrl->mdp_lock, flags);
+
+	mctrl = mdss_dsi_get_other_ctrl(ctrl); /* master controller */
+
+	if (mctrl)
+		mdp_tx_start = (MIPI_INP(ctrl->ctrl_base + 0x008) & BIT(2)) &&
+				(MIPI_INP(mctrl->ctrl_base + 0x008) & BIT(2));
+	/*
+	 * apply delay only if:
+	 *  mdp_busy bool is set - kickoff is being scheduled by sw
+	 *  MDP_BUSY bit  is not set - transfer is not on-going in hw yet
+	 *  for either of the controllers
+	 */
+	if (mdp_busy && !mdp_tx_start)
+		need_wait = true;
+
+exit:
+	MDSS_XLOG(need_wait, ctrl->is_cmdlist_from_mdp, mdp_busy);
+	return need_wait;
+}
+
+
 static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 					struct dsi_buf *tp)
 {
@@ -2026,6 +2078,17 @@ static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 
 	len = ALIGN(tp->len, 4);
 	ctrl->dma_size = ALIGN(tp->len, SZ_4K);
+
+	/*
+	 * In ping pong split cases, check if we need to apply a
+	 * delay for any commands that are not coming from
+	 * mdp path
+	 */
+	mutex_lock(&ctrl->mutex);
+	if (mdss_dsi_delay_cmd(ctrl))
+		ctrl->mdp_callback->fxn(ctrl->mdp_callback->data,
+			MDP_INTF_CALLBACK_DSI_WAIT);
+	mutex_unlock(&ctrl->mutex);
 
 	ctrl->mdss_util->iommu_lock();
 	if (ctrl->mdss_util->iommu_attached()) {
@@ -2528,48 +2591,6 @@ int mdss_dsi_cmdlist_rx(struct mdss_dsi_ctrl_pdata *ctrl,
 	return len;
 }
 
-static inline bool mdss_dsi_delay_cmd(struct mdss_dsi_ctrl_pdata *ctrl,
-	bool from_mdp)
-{
-	unsigned long flags;
-	bool mdp_busy = false;
-	bool need_wait = false;
-
-	if (!ctrl->mdp_callback)
-		goto exit;
-
-	/* delay only for split dsi, cmd mode and burst mode enabled cases */
-	if (!mdss_dsi_is_hw_config_split(ctrl->shared_data) ||
-	    !(ctrl->panel_mode == DSI_CMD_MODE) ||
-	    !ctrl->burst_mode_enabled)
-		goto exit;
-
-	/* delay only if cmd is not from mdp and panel has been initialized */
-	if (from_mdp || !(ctrl->ctrl_state & CTRL_STATE_PANEL_INIT))
-		goto exit;
-
-	/* if broadcast enabled, apply delay only if this is the ctrl trigger */
-	if (mdss_dsi_sync_wait_enable(ctrl) &&
-	   !mdss_dsi_sync_wait_trigger(ctrl))
-		goto exit;
-
-	spin_lock_irqsave(&ctrl->mdp_lock, flags);
-	if (ctrl->mdp_busy == true)
-		mdp_busy = true;
-	spin_unlock_irqrestore(&ctrl->mdp_lock, flags);
-
-	/*
-	 * apply delay only if:
-	 *  mdp_busy bool is set - kickoff is being scheduled by sw
-	 *  MDP_BUSY bit  is not set - transfer is not on-going in hw yet
-	 */
-	if (mdp_busy && !(MIPI_INP(ctrl->ctrl_base + 0x008) & BIT(2)))
-		need_wait = true;
-
-exit:
-	MDSS_XLOG(need_wait, from_mdp, mdp_busy);
-	return need_wait;
-}
 
 int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 {
@@ -2582,6 +2603,14 @@ int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	bool hs_req = false;
 	bool cmd_mutex_acquired = false;
 
+	struct mdss_panel_info *panel_info = NULL;
+
+	panel_info = &ctrl->panel_data.panel_info;
+	if (panel_info->panel_power_state == MDSS_PANEL_POWER_OFF) {
+		pr_err("LCD %s ndx=%d Power off,could not send cmd anymore!", __func__, ctrl->ndx);
+		return 0;
+	}
+
 	if (from_mdp) {	/* from mdp kickoff */
 		if (!ctrl->burst_mode_enabled) {
 			mutex_lock(&ctrl->cmd_mutex);
@@ -2593,6 +2622,11 @@ int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	}
 
 	req = mdss_dsi_cmdlist_get(ctrl, from_mdp);
+	if (req && from_mdp)
+		ctrl->is_cmdlist_from_mdp = true;
+	else
+		ctrl->is_cmdlist_from_mdp = false;
+
 	if (req && from_mdp && ctrl->burst_mode_enabled) {
 		mutex_lock(&ctrl->cmd_mutex);
 		cmd_mutex_acquired = true;
@@ -2684,17 +2718,6 @@ int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 
 	mdss_dsi_clk_ctrl(ctrl, ctrl->dsi_clk_handle, MDSS_DSI_ALL_CLKS,
 			  MDSS_DSI_CLK_ON);
-
-	/*
-	 * In ping pong split cases, check if we need to apply a
-	 * delay for any commands that are not coming from
-	 * mdp path
-	 */
-	mutex_lock(&ctrl->mutex);
-	if (mdss_dsi_delay_cmd(ctrl, from_mdp))
-		ctrl->mdp_callback->fxn(ctrl->mdp_callback->data,
-			MDP_INTF_CALLBACK_DSI_WAIT);
-	mutex_unlock(&ctrl->mutex);
 
 	if (req->flags & CMD_REQ_HS_MODE)
 		mdss_dsi_set_tx_power_mode(0, &ctrl->panel_data);

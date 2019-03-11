@@ -2163,7 +2163,7 @@ static long _gpuobj_map_useraddr(struct kgsl_device *device,
 		struct kgsl_mem_entry *entry,
 		struct kgsl_gpuobj_import *param)
 {
-	struct kgsl_gpuobj_import_useraddr useraddr;
+	struct kgsl_gpuobj_import_useraddr useraddr = {0};
 	int ret;
 
 	param->flags &= KGSL_MEMFLAGS_GPUREADONLY
@@ -4060,6 +4060,8 @@ static void kgsl_core_exit(void)
 static int __init kgsl_core_init(void)
 {
 	int result = 0;
+	struct sched_param param = { .sched_priority = 2 };
+
 	/* alloc major and minor device numbers */
 	result = alloc_chrdev_region(&kgsl_driver.major, 0, KGSL_DEVICE_MAX,
 		"kgsl");
@@ -4124,6 +4126,18 @@ static int __init kgsl_core_init(void)
 
 	kgsl_driver.mem_workqueue = alloc_workqueue("kgsl-mementry",
 		WQ_UNBOUND | WQ_MEM_RECLAIM, 0);
+
+	init_kthread_worker(&kgsl_driver.worker);
+
+	kgsl_driver.worker_thread = kthread_run(kthread_worker_fn,
+		&kgsl_driver.worker, "kgsl_worker_thread");
+
+	if (IS_ERR(kgsl_driver.worker_thread)) {
+		pr_err("unable to start kgsl thread\n");
+		goto err;
+	}
+
+	sched_setscheduler(kgsl_driver.worker_thread, SCHED_FIFO, &param);
 
 	kgsl_events_init();
 

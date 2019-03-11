@@ -157,6 +157,17 @@ struct ion_heap_ops {
  */
 #define ION_PRIV_FLAG_SHRINKER_FREE (1 << 0)
 
+#ifdef CONFIG_ION_ZTE_DEDICATED_PAGE_BLOCK
+/*
+ * find a bit not used by android to indicate if the page block
+ * will not be released when shrinking.
+ * The buffer will be released to cache instead of the system allocator.
+ * Now only used in the ion system heap.
+ * But in optimizing stage 1, we only care the limit, not used now.
+ */
+#define ION_PRIV_FLAG_ZTE_DEDICATED_PAGE_BLOCK 0x10
+#endif
+
 /**
  * struct ion_heap - represents a heap in the system
  * @node:		rb node to put the heap on the device's tree of heaps
@@ -485,8 +496,14 @@ static inline void ion_page_pool_free_set_cache_policy
  *
  * returns the number of items freed in pages
  */
+#ifdef CONFIG_ION_ZTE_DEDICATED_PAGE_BLOCK
+/* @reserve_count: add this param to reserve order items when shrink */
+int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
+			 int nr_to_scan, int reserve_count);
+#else
 int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 			  int nr_to_scan);
+#endif
 
 /**
  * ion_pages_sync_for_device - cache flush pages for use with the specified
