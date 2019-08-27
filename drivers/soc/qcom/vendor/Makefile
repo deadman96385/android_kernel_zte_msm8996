@@ -3,4 +3,3 @@ CFLAGS_scm.o :=$(call as-instr,.arch_extension sec,-DREQUIRES_SEC=1)
 
 obj-y		+= sdlog/
 obj-y		+= vlog/
-obj-y		+= fuseinfo/

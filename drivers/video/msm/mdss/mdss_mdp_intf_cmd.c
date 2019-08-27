@@ -2088,11 +2088,6 @@ static int mdss_mdp_cmd_panel_on(struct mdss_mdp_ctl *ctl,
 	if (is_pingpong_split(ctl->mfd))
 		sctx = (struct mdss_mdp_cmd_ctx *) ctl->intf_ctx[SLAVE_CTX];
 
-#ifdef CONFIG_BOARD_FUJISAN
-	if (ctl->num == 1) {
-		mutex_lock(&ctl->panel_on_lock);
-	}
-#endif
 	if (!__mdss_mdp_cmd_is_panel_power_on_interactive(ctx)) {
 		if (ctl->pending_mode_switch != SWITCH_RESOLUTION) {
 			rc = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_LINK_READY,
@@ -2136,11 +2131,6 @@ static int mdss_mdp_cmd_panel_on(struct mdss_mdp_ctl *ctl,
 	} else {
 		pr_err("%s: Panel already on\n", __func__);
 	}
-#ifdef CONFIG_BOARD_FUJISAN
-	if (ctl->num == 1) {
-		mutex_unlock(&ctl->panel_on_lock);
-	}
-#endif
 
 	return rc;
 }

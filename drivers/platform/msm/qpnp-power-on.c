@@ -2134,7 +2134,7 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 	u32 delay = 0, s3_debounce = 0;
 	int rc, sys_reset, index;
 	int reason_index_offset = 0;
-	u8 pon_sts = 0, warm_reset_sts = 0, buf[2];
+	u8 pon_sts = 0, buf[2];
 	u16 poff_sts = 0;
 	const char *s3_src;
 	u8 s3_src_reg;
@@ -2250,19 +2250,6 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 			rc);
 		return rc;
 	}
-	dev_info(&pon->spmi->dev, "PMIC@SID%d Power-on reason: 0x%x\n",
-			pon->spmi->sid, pon_sts);
-
-	/* Warm reset reason */
-	rc = spmi_ext_register_readl(pon->spmi->ctrl, pon->spmi->sid,
-				QPNP_PON_WARM_RESET_REASON1(pon), &warm_reset_sts, 1);
-	if (rc) {
-		dev_err(&pon->spmi->dev, "Unable read WARM_RESET_REASON1 rc: %d\n",
-			rc);
-		return rc;
-	}
-	dev_info(&pon->spmi->dev, "PMIC@SID%d Warm reset reason: 0x%x\n",
-			pon->spmi->sid, warm_reset_sts);
 
 	index = ffs(pon_sts) - 1;
 	cold_boot = !qpnp_pon_is_warm_reset();
@@ -2295,10 +2282,6 @@ static int qpnp_pon_probe(struct spmi_device *spmi)
 		}
 		poff_sts = buf[0] | (buf[1] << 8);
 	}
-
-	dev_info(&pon->spmi->dev, "PMIC@SID%d Power-off reason: 0x%x\n",
-			pon->spmi->sid, poff_sts);
-
 	index = ffs(poff_sts) - 1 + reason_index_offset;
 	if (index >= ARRAY_SIZE(qpnp_poff_reason) || index < 0) {
 		dev_info(&pon->spmi->dev,

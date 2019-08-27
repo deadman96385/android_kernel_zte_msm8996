@@ -1626,8 +1626,7 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 	}
 
 	/*zte,esd interrupt mode 0205  start */
-	if (pdata->panel_info.esd_check_enabled &&
-		mdss_dsi_is_gpio_interrupt_esd(ctrl_pdata))
+	if (mdss_dsi_is_gpio_interrupt_esd(ctrl_pdata))
 		enable_irq(gpio_to_irq(ctrl_pdata->lcd_esd_interrupt_gpio));
 	/*zte,esd interrupt mode 0205  end */
 
@@ -1707,8 +1706,7 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata, int power_state)
 	}
 
 	/*zte,esd interrupt mode 0205  start */
-	if (pdata->panel_info.esd_check_enabled &&
-		mdss_dsi_is_gpio_interrupt_esd(ctrl_pdata))
+	if (mdss_dsi_is_gpio_interrupt_esd(ctrl_pdata))
 		disable_irq(gpio_to_irq(ctrl_pdata->lcd_esd_interrupt_gpio));
 	/*zte,esd interrupt mode 0205  end */
 
@@ -3274,10 +3272,7 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 	}
 
 	/*zte,esd interrupt mode 0205  start */
-	if (pinfo->esd_check_enabled &&
-		mdss_dsi_is_gpio_interrupt_esd(ctrl_pdata)) {
-		pr_info("%s: devm_request_irq lcd_esd_interrupt_gpio=%d\n",
-			__func__, ctrl_pdata->lcd_esd_interrupt_gpio);
+	if (mdss_dsi_is_gpio_interrupt_esd(ctrl_pdata)) {
 		rc = devm_request_irq(&pdev->dev,
 			gpio_to_irq(ctrl_pdata->lcd_esd_interrupt_gpio),
 			esd_gpio_interrupt_handler, IRQF_TRIGGER_RISING,

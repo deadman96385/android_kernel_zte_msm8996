@@ -66,11 +66,9 @@
 		reg = <0x50>;
 		interrupt-parent = <&tlmm>;
 		interrupts = <122 0x2008>;
-		/* zte: fix compile err, P996A20 VDF use gpio121 as hw-id /material-info
 		pinctrl-names = "default","sleep";
 		pinctrl-0 = <&ndt_power_active &ndt_int_active &ndt_reset_active>;
 		pinctrl-1 = <&ndt_power_suspend &ndt_int_suspend &ndt_reset_suspend>;
-		*/
 		ndt,irq-gpio = <&tlmm 122 0x00>;
 		ndt,irq-on-state = <0>;
 		ndt,irq-flags = <0x2008>;

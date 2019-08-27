@@ -26,7 +26,6 @@
 #include <soc/qcom/scm.h>
 #include <soc/qcom/smem.h>
 #include "../../smem_private.h"
-#include <soc/qcom/subsystem_notif.h>
 
 
 #define VLOG_MEMORY_ADDR_PROP "qcom,msm-imem-vlog_memory_addr"
@@ -125,22 +124,6 @@ static struct notifier_block nb = {
 		if (detail_log) \
 			pr_info(fmt, ##__VA_ARGS__); \
 	} while (0)
-
-struct ssr_notifier_block {
-	unsigned processor;
-	char *name;
-	struct notifier_block nb;
-};
-
-
-static int vlog_restart_notifier_cb(struct notifier_block *this,
-		unsigned long code,
-		void *data);
-
-
-static struct ssr_notifier_block vlog_restart_notifiers[] = {
-	{SMEM_MODEM, "modem", .nb.notifier_call = vlog_restart_notifier_cb},
-};
 
 
 static int vlog_status_set(const char *val, struct kernel_param *kp);
@@ -642,53 +625,11 @@ static void vendor_log_imem_init(void)
 
 }
 
-
-static int vendor_log_ssr_reinit(void)
-{
-	pr_info("vendor_log_ssr_init\n");
-	vlog_device.read_bytes = 0;
-	vlog_device.available_bytes = 0;
-	return 0;
-}
-
-
-static int vlog_restart_notifier_cb(struct notifier_block *this,
-		unsigned long code,
-		void *data)
-{
-	struct ssr_notifier_block *notifier;
-
-	pr_info("vlog_restart_notifier_cb: code 0x%lx\n", code);
-
-	switch (code) {
-
-	case SUBSYS_AFTER_SHUTDOWN:
-	{
-		notifier = container_of(this,
-			struct ssr_notifier_block, nb);
-		pr_info("%s: ssrestart for processor %d ('%s')\n",
-			__func__, notifier->processor,
-			notifier->name);
-		vendor_log_ssr_reinit();
-		break;
-	}
-
-	default:
-		break;
-	}
-
-	return NOTIFY_DONE;
-}
-
 static __init int vendor_log_late_init(void)
 {
-	int i;
-	void *handle;
-	struct ssr_notifier_block *ssr_nb;
+	pr_info("vendor_log_late_init\n");
 
 	tickes = 2;
-
-	pr_info("vendor_log_late_init\n");
 
 	memset(&vlog_device, 0, sizeof(vlog_device));
 
@@ -708,14 +649,6 @@ static __init int vendor_log_late_init(void)
 
 	INIT_DELAYED_WORK(&(vlog_device.vlog_check_log),
 		vlog_check_log_work_fn);
-
-	for (i = 0; i < ARRAY_SIZE(vlog_restart_notifiers); i++) {
-		ssr_nb = &vlog_restart_notifiers[i];
-		handle = subsys_notif_register_notifier(ssr_nb->name,
-					&ssr_nb->nb);
-		pr_info("%s: registering notif for '%s', handle=%p\n",
-				__func__, ssr_nb->name, handle);
-	}
 
 	smem_module_init_notifier_register(&nb);
 	return 0;

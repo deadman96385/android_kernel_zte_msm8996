@@ -26,10 +26,7 @@
 };
 &soc {
 	zte_misc {
-		compatible = "zte-misc";
-		material-num,gpio1 = <&tlmm 94 0>;
-		material-num,gpio2 = <&tlmm 121 0>;
-		material-num,gpio3 = <&tlmm 130 0>;
+	compatible = "zte-misc";
 	};
 	zte-hall {
 		compatible = "zte-hall";

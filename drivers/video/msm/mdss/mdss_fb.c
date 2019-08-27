@@ -4412,10 +4412,10 @@ static int mdss_fb_handle_buf_sync_ioctl(struct msm_sync_pt_data *sync_pt_data,
 		goto buf_sync_err_3;
 	}
 
+	sync_fence_install(rel_fence, rel_fen_fd);
 	sync_fence_install(retire_fence, retire_fen_fd);
 
 skip_retire_fence:
-	sync_fence_install(rel_fence, rel_fen_fd);
 	mutex_unlock(&sync_pt_data->sync_mutex);
 
 	if (buf_sync->flags & MDP_BUF_SYNC_FLAG_WAIT)
@@ -4912,26 +4912,8 @@ int mdss_fb_do_ioctl(struct fb_info *info, unsigned int cmd,
 		ret = mdss_fb_mode_switch(mfd, dsi_mode);
 		break;
 	case MSMFB_ATOMIC_COMMIT:
-		{
-#ifdef CONFIG_BOARD_FUJISAN
-			/*the second panel will show chaos content at the first two frame when starting up.
-			skip it to avoid chaos show*/
-			struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
-			static int skipframe = 2;
-
-			if (!mfd || (!mfd->op_enable)) {
-				pr_err("mfd is NULL or operation not permitted\n");
-				return -EPERM;
-			}
-			if (skipframe > 0 && mfd->index == 1) {
-				skipframe--;
-				pr_info("%s: MSMFB_ATOMIC_COMMIT skipframe %d break\n", __func__, skipframe);
-				break;
-			}
-#endif
-			ret = mdss_fb_atomic_commit_ioctl(info, argp, file);
-			break;
-		}
+		ret = mdss_fb_atomic_commit_ioctl(info, argp, file);
+		break;
 
 	case MSMFB_ASYNC_POSITION_UPDATE:
 		ret = mdss_fb_async_position_update_ioctl(info, argp);

@@ -54,7 +54,6 @@
 #define M1120_OPERATION_RESOLUTION			M1120_VAL_OPF_BIT_10
 #define M1120_DETECT_RANGE_HIGH				(150)/*(60) Need change via test. */
 #define M1120_DETECT_RANGE_LOW				(-150)/*(50) Need change via test. */
-#define M1120_DETECT_RANGE_HIGH_MAX			(512)
 #define M1120_RESULT_STATUS_A               (0x01)/*result status A ----> == 0Degree.*/
 #define M1120_RESULT_STATUS_B               (0x02)/*result status B ----> == !0!180Degree.*/
 #define M1120_RESULT_STATUS_C               (0x03)/*result status C ----> == 180Degree.*/
@@ -305,7 +304,6 @@ static int m1120_set_power(struct device *dev, bool on)
 /* ********************************************************* */
 static void m1120_work_func(struct work_struct *work)
 {
-	#ifndef ZTE_FEATURE_ANALOG_HALL_ONLY
 	m1120_data_t *p_data = container_of((struct delayed_work *)work, m1120_data_t, work);
 	unsigned long delay = msecs_to_jiffies(m1120_get_delay(&p_data->client->dev));
 	short raw = 0;
@@ -352,7 +350,6 @@ static void m1120_work_func(struct work_struct *work)
 		dbg("run schedule_delayed_work");
 	}
 	wake_unlock(&p_data->wake_lock);
-	#endif
 }
 /* ********************************************************* */
 
@@ -403,9 +400,6 @@ static irqreturn_t m1120_irq_handler(int irq, void *dev_id)
 static void m1120_work_hallswitch_func(struct work_struct *work_hallswitch)
 {
 	m1120_data_t *p_data = container_of((struct delayed_work *)work_hallswitch, m1120_data_t, work_hallswitch);
-	#ifndef ZTE_FEATURE_ANALOG_HALL_ONLY
-	short raw = 0;
-	#endif
 
 	dbg_func_in();
 	p_data->hallswitchstate = gpio_get_value(p_data->gpio_hallswitch);
@@ -413,11 +407,7 @@ static void m1120_work_hallswitch_func(struct work_struct *work_hallswitch)
 	if (p_data->hallswitchstate == 0) {
 		p_data->last_data = M1120_RESULT_STATUS_A;
 	} else {
-		#ifndef ZTE_FEATURE_ANALOG_HALL_ONLY
 		p_data->last_data = M1120_RESULT_STATUS_B;
-		#else
-		p_data->last_data = M1120_RESULT_STATUS_C;
-		#endif
 	}
 	if (p_data->last_data != p_data->pre_data) {
 		input_report_rel(p_data->input_dev, M1120_EVENT_CODE, p_data->last_data);
@@ -425,17 +415,6 @@ static void m1120_work_hallswitch_func(struct work_struct *work_hallswitch)
 		p_data->pre_data = p_data->last_data;
 		pr_info("m1120_work_hallswitch_func : status = %d\n", p_data->last_data);
 	}
-	#ifndef ZTE_FEATURE_ANALOG_HALL_ONLY
-	if (p_data->last_data == M1120_RESULT_STATUS_B) {
-		pr_info("m1120_work_hallswitch_func : p_data->reg.map.intsrs = 0x%x\n", p_data->reg.map.intsrs);
-		if (p_data->reg.map.intsrs & M1120_VAL_INTSRS_INTTYPE_WITHIN) {
-			p_data->reg.map.intsrs = p_data->reg.map.intsrs & (~M1120_VAL_INTSRS_INTTYPE_WITHIN);
-			m1120_i2c_set_reg(p_data->client, M1120_REG_INTSRS, p_data->reg.map.intsrs);
-			m1120_update_interrupt_threshold(&p_data->client->dev, raw);
-			pr_info("m1120_work_hallswitch_func : update interrupt type to besides\n");
-		}
-	}
-	#endif
 }
 /* ********************************************************* */
 
@@ -458,7 +437,6 @@ static void m1120_set_init_state(struct device *dev)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	m1120_data_t *p_data = i2c_get_clientdata(client);
-	#ifndef ZTE_FEATURE_ANALOG_HALL_ONLY
 	short initraw = 0;
 	int err = 0;
 
@@ -479,19 +457,6 @@ static void m1120_set_init_state(struct device *dev)
 	} else {
 		mxerr(&client->dev, "read init raw data error, ret %d", err);
 	}
-	#else
-	p_data->hallswitchstate = gpio_get_value(p_data->gpio_hallswitch);
-	pr_info("m1120_set_init_state: hall switch state is %d\n", p_data->hallswitchstate);
-	if (p_data->hallswitchstate == 0) {
-		p_data->last_data = M1120_RESULT_STATUS_A;
-	} else {
-		p_data->last_data = M1120_RESULT_STATUS_C;
-	}
-	input_report_rel(p_data->input_dev, M1120_EVENT_CODE, p_data->last_data);
-	input_sync(p_data->input_dev);
-	p_data->pre_data = p_data->last_data;
-	pr_info("m1120_set_init_state : status = %d\n", p_data->last_data);
-	#endif
 }
 
 /* ********************************************************* */
@@ -907,7 +872,7 @@ static int m1120_init_device(struct device *dev)
 	p_data->pre_data = 0;
 	p_data->irq_enabled = 0;
 	p_data->irq_first = 1;
-	p_data->thrhigh = M1120_DETECT_RANGE_HIGH_MAX;
+	p_data->thrhigh = M1120_DETECT_RANGE_HIGH;
 	p_data->thrlow = M1120_DETECT_RANGE_LOW;
 	p_data->thrhigh_orig = M1120_DETECT_RANGE_HIGH;
 	p_data->hallswitchstate = 0;
@@ -1410,7 +1375,6 @@ static long m1120_misc_dev_ioctl(struct file *file, unsigned int cmd, unsigned l
 				p_m1120_data->thrhigh = 0;
 			} else {
 				p_m1120_data->thrhigh = p_m1120_data->calibrated_data - M1120_DATA_TOLERANCE;
-				p_m1120_data->thrhigh_orig = p_m1120_data->calibrated_data - M1120_DATA_TOLERANCE;
 			}
 		} else if (kbuf == 3) {
 			ret = m1120_set_calibration(&p_m1120_data->client->dev);
@@ -1482,7 +1446,7 @@ static long m1120_misc_dev_ioctl(struct file *file, unsigned int cmd, unsigned l
 		}
 		pr_info("M1120_IOCTL_SET_THRESHOLD_HIGH(%d)\n", kcalbuf);
 		/* do not use mxm1120 to detect status A, using analog hall sensor instead */
-		p_m1120_data->thrhigh = M1120_DETECT_RANGE_HIGH_MAX;
+		p_m1120_data->thrhigh = 512;
 		p_m1120_data->thrhigh_orig = kcalbuf;
 		break;
 	case M1120_IOCTL_GET_THRESHOLD_HIGH:

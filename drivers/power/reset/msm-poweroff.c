@@ -83,9 +83,6 @@ static void *dload_type_addr;
 static void *sd_dump_mode_addr;
 static int ignore_sd_dump = 0;
 
-extern int need_shipmode;
-extern int smb_set_shipmode(void);
-extern bool check_usb_present(void);
 
 static int dload_set(const char *val, struct kernel_param *kp);
 /* interface for exporting attributes */
@@ -207,7 +204,6 @@ static bool get_dload_mode(void)
 	return dload_mode_enabled;
 }
 
-#if 1
 static void enable_emergency_dload_mode(void)
 {
 	int ret;
@@ -232,11 +228,6 @@ static void enable_emergency_dload_mode(void)
 	if (ret)
 		pr_err("Failed to set secure EDLOAD mode: %d\n", ret);
 }
-#else
-static void enable_emergency_dload_mode(void)
-{
-}
-#endif
 
 static int dload_set(const char *val, struct kernel_param *kp)
 {
@@ -428,14 +419,6 @@ static void msm_restart_prepare(const char *cmd)
 			__raw_writel(0x776655bb, restart_reason);
 		} else {
 			__raw_writel(0x77665501, restart_reason);
-
-			if (need_shipmode) {
-				if (!check_usb_present()) {
-					pr_info("trigger shipmode!\n");
-					smb_set_shipmode();
-				} else
-					pr_info("need shipmode! but usb present\n");
-			}
 		}
 	}
 
@@ -504,15 +487,7 @@ static void do_msm_poweroff(void)
 {
 	pr_notice("Powering off the SoC\n");
 
-	if (need_shipmode) {
-		if (!check_usb_present()) {
-			pr_info("trigger shipmode!\n");
-			smb_set_shipmode();
-		} else
-			pr_info("need shipmode! but usb present\n");
-	}
-
-	qpnp_s2_reset_en();
+    qpnp_s2_reset_en();
 
 	set_dload_mode(0);
 	scm_disable_sdi();

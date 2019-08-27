@@ -411,9 +411,6 @@ struct mdss_mdp_ctl {
 	struct mdss_mdp_cdm *cdm;
 	struct mutex lock;
 	struct mutex offlock;
-#ifdef CONFIG_BOARD_FUJISAN
-	struct mutex panel_on_lock;
-#endif
 	struct mutex flush_lock;
 	struct mutex *shared_lock;
 	struct mutex rsrc_lock;

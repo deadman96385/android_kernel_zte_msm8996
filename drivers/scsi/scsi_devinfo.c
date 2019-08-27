@@ -83,7 +83,6 @@ static struct {
 	 * aha152x controller, which causes SCSI code to reset bus.
 	 */
 	{"SANYO", "CRD-250S", "1.20", BLIST_NOLUN},
-	{"SanDisk", "SanDisk Cruzer", "8.02", BLIST_WAIT_MEDIA},
 	/*
 	 * The following causes a failed REQUEST SENSE on lun 1 for
 	 * aha152x controller, which causes SCSI code to reset bus.

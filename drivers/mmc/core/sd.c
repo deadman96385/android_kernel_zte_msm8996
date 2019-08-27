@@ -1465,7 +1465,6 @@ int mmc_attach_sd(struct mmc_host *host)
 	if (!retries) {
 		printk(KERN_ERR "%s: mmc_sd_init_card() failure (err = %d)\n",
 		       mmc_hostname(host), err);
-		host->is_bad_card = true;
 		goto err;
 	}
 #else

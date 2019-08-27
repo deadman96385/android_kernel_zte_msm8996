@@ -43,7 +43,7 @@
 #endif
 #endif
 
-#define FPC_TTW_HOLD_TIME 2000
+#define FPC_TTW_HOLD_TIME 1000
 
 #define RESET_LOW_SLEEP_MIN_US 5000
 #define RESET_LOW_SLEEP_MAX_US (RESET_LOW_SLEEP_MIN_US + 100)
@@ -94,7 +94,6 @@ struct fpc1020_data {
 #ifdef CONFIG_FB
 	struct notifier_block fb_notif;
 	bool irq_enabled;
-	atomic_t wakeup_system_enabled;
 #endif
 #endif
 	atomic_t wakeup_enabled; /* Used both in ISR and non-ISR */
@@ -462,71 +461,6 @@ static ssize_t irq_ack(struct device *dev,
 }
 static DEVICE_ATTR(irq, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP, irq_get, irq_ack);
 
-#ifdef ZTE_FEATURE_FINGERPRINT_NON_WAKEUP
-/**
- * sysfs node for controlling whether the driver is allowed
- * to wake up the platform on interrupt.
- */
-static ssize_t wakeup_system_enable_get(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	struct fpc1020_data *fpc1020 = dev_get_drvdata(dev);
-	int ret = 0;
-
-	mutex_lock(&fpc1020->lock);
-	ret = atomic_read(&fpc1020->wakeup_system_enabled);
-	mutex_unlock(&fpc1020->lock);
-
-	dev_info(dev, "%s: current set_value:%d\n", __func__, ret);
-
-	return scnprintf(buf, PAGE_SIZE, "%i\n", ret);
-}
-
-/**
- * sysfs node for controlling whether the driver is allowed
- * to wake up the platform on interrupt.
- */
-static ssize_t wakeup_system_enable_set(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct fpc1020_data *fpc1020 = dev_get_drvdata(dev);
-	ssize_t ret = count;
-	int set_value = 0;
-	int rc = 0;
-
-	rc = kstrtoint(buf, 10, &set_value);
-	if (rc) {
-		dev_err(dev, "%s: kstrtoint_from_user failed, rc=%d count=%zu\n", __func__, rc, count);
-		return rc;
-	}
-
-	if (set_value == atomic_read(&fpc1020->wakeup_system_enabled)) {
-		dev_info(dev, "%s: set_value:%d is the same with current mode\n", __func__, set_value);
-		return ret;
-	}
-
-	mutex_lock(&fpc1020->lock);
-	if (set_value == 1) {
-		enable_irq_wake(gpio_to_irq(fpc1020->irq_gpio));
-		atomic_set(&fpc1020->wakeup_system_enabled, 1);
-	} else if (set_value == 0) {
-		disable_irq_wake(gpio_to_irq(fpc1020->irq_gpio));
-		atomic_set(&fpc1020->wakeup_system_enabled, 0);
-
-	} else {
-		dev_err(dev, "%s: set_value is illegal\n", __func__);
-		ret = -EINVAL;
-	}
-	mutex_unlock(&fpc1020->lock);
-
-	dev_info(dev, "%s: set_value:%d\n", __func__, set_value);
-
-	return ret;
-}
-static DEVICE_ATTR(wakeup_system_enable, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP,
-	wakeup_system_enable_get, wakeup_system_enable_set);
-#endif
-
 static struct attribute *attributes[] = {
 	&dev_attr_pinctl_set.attr,
 	&dev_attr_device_prepare.attr,
@@ -535,9 +469,6 @@ static struct attribute *attributes[] = {
 	&dev_attr_wakeup_enable.attr,
 	&dev_attr_clk_enable.attr,
 	&dev_attr_irq.attr,
-	#ifdef ZTE_FEATURE_FINGERPRINT_NON_WAKEUP
-	&dev_attr_wakeup_system_enable.attr,
-	#endif
 	NULL
 };
 
@@ -599,11 +530,6 @@ static int fb_notifier_callback(struct notifier_block *self,
 	static bool fb1_on_state = false;
 	struct fpc1020_data *fpc1020 =
 		container_of(self, struct fpc1020_data, fb_notif);
-
-	if (atomic_read(&fpc1020->wakeup_system_enabled) && (fpc1020->irq_enabled == true)) {
-		pr_info("fpc1020 is wakeup_system_enabled by setting\n");
-		return 0;
-	}
 
 	/* If we aren't interested in this event, skip it immediately ... */
 	if (event != FB_EARLY_EVENT_BLANK)
@@ -759,7 +685,6 @@ static int fpc1020_probe(struct platform_device *pdev)
 	/* Request that the interrupt should be wakeable */
 	#ifdef ZTE_FEATURE_FINGERPRINT_NON_WAKEUP
 	enable_irq(gpio_to_irq(fpc1020->irq_gpio));
-	atomic_set(&fpc1020->wakeup_system_enabled, 0);
 	#else
 	enable_irq_wake(gpio_to_irq(fpc1020->irq_gpio));
 	#endif

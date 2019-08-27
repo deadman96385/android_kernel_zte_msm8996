@@ -506,24 +506,14 @@ module_param_call(shipmode_zte, zte_misc_control_shipmode, zte_misc_get_shipmode
 
 /*ZTE_PM end***************************************************************************/
 
-static char *hw_id = NULL;
-static int id_num = -1;
-
-/* zte:  uarA/uarB/udeA: for engineer developing, not for release
-*          udnA: for Japan DCM
-*          udrA: for UERO
-*          ufnA: for China
-*/
-static char *hw_id_text[] = {
-		"undefined", "uarA", "uarB", "udeA", "udnA", "udrA", "ufnA", "Undef"
-};
+static int hw_id = -1;
 
 int check_hw_id(void)
 {
 	struct device_node *np;
 	uint32_t *buf = NULL;
 
-	if (hw_id == NULL) {
+	if (hw_id == -1) {
 		np = of_find_compatible_node(NULL, NULL, "zte,imem-hw-ver-id");
 		if (!np) {
 			pr_err("unable to find DT imem zte,imem-hw-ver-id\n");
@@ -533,97 +523,15 @@ int check_hw_id(void)
 			if (!buf)
 				pr_err("unable to map imem [hw-ver-id]\n");
 			else
-				id_num = *buf;
+				hw_id = *buf;
 		}
-
-		if (id_num > 0 && id_num < sizeof(hw_id_text)/sizeof(hw_id_text[0] - 2))
-			hw_id = hw_id_text[id_num];
-
-		pr_info("hw_id=%d, %s\n", id_num, hw_id_text[id_num]);
+		pr_info("hw_id=%d\n", hw_id);
 	}
 
-	return id_num;
+	return hw_id;
 }
 
-module_param(hw_id, charp, 0444);
-
-struct material_num_t {
-	int material_num;
-	char *material_str;
-};
-
-static struct material_num_t material_num_matrix[] = {
-		{0, "ZTE AXON M T2"},
-		{1, "ZTE AXON M T3"},
-		{2, "ZTE AXON M MP"},
-};
-
-static int material_num = 0;
-static char *material_info = "Undef";
-int check_material_num(struct device *dev)
-{
-	int gpio1, gpio2, gpio3;
-	unsigned int gpio_value[3];
-	int rc, i;
-
-	gpio1 = of_get_named_gpio(dev->of_node, "material-num,gpio1", 0);
-	if (!gpio_is_valid(gpio1)) {
-		pr_err("%s: gpio1 not specified\n", __func__);
-		return -EINVAL;
-	}
-	pr_info("%s: material-num gpio1 found %d\n", __func__, gpio1);
-	rc = gpio_request(gpio1, "material_num_gpio1");
-	if (rc) {
-		pr_err("%s: request meterial gpio1 failed, rc=%d\n", __func__, rc);
-		return -EINVAL;
-	}
-	gpio_direction_input(gpio1);
-
-	gpio2 = of_get_named_gpio(dev->of_node, "material-num,gpio2", 0);
-	if (!gpio_is_valid(gpio2)) {
-		pr_err("%s: gpio2 not specified\n", __func__);
-		return -EINVAL;
-	}
-	pr_info("%s: material-num gpio2 found %d\n", __func__, gpio2);
-	rc = gpio_request(gpio2, "material_num_gpio2");
-	if (rc) {
-		pr_err("%s: request meterial gpio2 failed, rc=%d\n", __func__, rc);
-		return -EINVAL;
-	}
-	gpio_direction_input(gpio2);
-
-	gpio3 = of_get_named_gpio(dev->of_node, "material-num,gpio3", 0);
-	if (!gpio_is_valid(gpio3)) {
-		pr_err("%s: gpio3 not specified\n", __func__);
-		return -EINVAL;
-	}
-	pr_info("%s: material-num gpio3 found %d\n", __func__, gpio3);
-	rc = gpio_request(gpio3, "material_num_gpio3");
-	if (rc) {
-		pr_err("%s: request meterial gpio3 failed, rc=%d\n", __func__, rc);
-		return -EINVAL;
-	}
-	gpio_direction_input(gpio3);
-
-	gpio_value[0] = __gpio_get_value(gpio1);
-	gpio_value[1] = __gpio_get_value(gpio2);
-	gpio_value[2] = __gpio_get_value(gpio3);
-
-	material_num = (gpio_value[2] << 2) | (gpio_value[1] << 1) | gpio_value[0];
-
-	pr_info("%s: material_num=%d, [2]%d, [1]%d, [0]%d\n", __func__, material_num,
-		gpio_value[2], gpio_value[1], gpio_value[0]);
-
-	for (i = 0; i < ARRAY_SIZE(material_num_matrix); i++) {
-		if (material_num == material_num_matrix[i].material_num) {
-			material_info = material_num_matrix[i].material_str;
-			break;
-		}
-	}
-	return material_num;
-}
-
-module_param(material_info, charp, 0444);
+module_param(hw_id, int, 0444);
 
 static int zte_misc_probe(struct platform_device *pdev)
 {
@@ -637,7 +545,6 @@ static int zte_misc_probe(struct platform_device *pdev)
 	zte_misc_parse_imem();
 	zte_misc_fingerprint_hw_check(dev);
 	check_hw_id();
-	check_material_num(dev);
 
 	pr_info("%s ----\n", __func__);
 	return 0;

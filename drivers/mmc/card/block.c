@@ -1266,37 +1266,6 @@ static int send_stop(struct mmc_card *card, unsigned int timeout_ms,
 	return card_busy_detect(card, timeout_ms, use_r1b_resp, req, gen_err);
 }
 
-#define CARD_STATUS_CURRENT_STATE_MASK 0x1E00
-#define CARD_STATUS_CURRENT_STATE_SHIFT 9
-static char *mmc_status_string(u32 status)
-{
-	int current_state;
-
-	current_state = ((status & CARD_STATUS_CURRENT_STATE_MASK) >> CARD_STATUS_CURRENT_STATE_SHIFT);
-	switch (current_state) {
-	case 0:
-		return "idle";
-	case 1:
-		return "ready";
-	case 2:
-		return "ident";
-	case 3:
-		return "stby";
-	case 4:
-		return "tran";
-	case 5:
-		return "data";
-	case 6:
-		return "rcv";
-	case 7:
-		return "prg";
-	case 8:
-		return "dis";
-	default:
-		return "reserved";
-	}
-}
-
 #define ERR_NOMEDIUM	3
 #define ERR_RETRY	2
 #define ERR_ABORT	1
@@ -1316,8 +1285,8 @@ static int mmc_blk_cmd_error(struct request *req, const char *name, int error,
 
 	case -ETIMEDOUT:
 		pr_err_ratelimited(
-			"%s: timed out sending %s command, card status %#x(%s)\n",
-			req->rq_disk->disk_name, name, status, mmc_status_string(status));
+			"%s: timed out sending %s command, card status %#x\n",
+			req->rq_disk->disk_name, name, status);
 
 		/* If the status cmd initially failed, retry the r/w cmd */
 		if (!status_valid) {

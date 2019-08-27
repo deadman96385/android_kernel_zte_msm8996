@@ -214,10 +214,10 @@
 			#size-cells = <1>;
 
 			qcom,iterm-ma = <150>;
-			qcom,fastchg-current-ma = <2900>;
+			qcom,fastchg-current-ma = <3000>;
 			qcom,float-voltage-mv = <4400>;
-			qcom,fastchg-current-comp = <250>;
-			qcom,float-voltage-comp = <0>;
+			qcom,fastchg-current-comp = <900>;
+			qcom,float-voltage-comp = <10>;
 			qcom,resume-delta-mv = <100>;
 			qcom,chg-inhibit-fg;
 			qcom,dc-psy-type = "Mains";

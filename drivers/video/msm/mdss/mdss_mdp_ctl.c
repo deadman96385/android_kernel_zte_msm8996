@@ -2367,9 +2367,6 @@ struct mdss_mdp_ctl *mdss_mdp_ctl_alloc(struct mdss_data_type *mdata,
 			ctl->mdata = mdata;
 			mutex_init(&ctl->lock);
 			mutex_init(&ctl->offlock);
-#ifdef CONFIG_BOARD_FUJISAN
-			mutex_init(&ctl->panel_on_lock);
-#endif
 			mutex_init(&ctl->flush_lock);
 			mutex_init(&ctl->rsrc_lock);
 			spin_lock_init(&ctl->spin_lock);

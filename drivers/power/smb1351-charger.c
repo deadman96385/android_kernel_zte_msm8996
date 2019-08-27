@@ -860,11 +860,6 @@ static int smb1351_get_usb_chg_current(struct smb1351_charger *chip,
 	return rc;
 }
 
-extern int batt_cool_smb_current;
-extern int batt_warm_smb_current;
-extern int g_batt_health_state;
-extern int usb_hvdcp_for_health;
-extern int batt_warm_smb_qc20_current;
 static int smb1351_set_usb_chg_current(struct smb1351_charger *chip,
 						int current_ma)
 {
@@ -872,14 +867,6 @@ static int smb1351_set_usb_chg_current(struct smb1351_charger *chip,
 	u8 reg = 0, mask = 0;
 
 	pr_info("USB current_ma = %d\n", current_ma);
-
-	if (g_batt_health_state == 1)
-		current_ma = batt_cool_smb_current;
-	if (g_batt_health_state == 2)
-		current_ma = batt_warm_smb_current;
-	if (usb_hvdcp_for_health == 1)
-		current_ma = batt_warm_smb_qc20_current;
-	pr_info("smb g_batt_health_state=%d current=%d\n", g_batt_health_state, current_ma);
 
 	if (chip->chg_autonomous_mode) {
 		pr_info("Charger in autonomous mode\n");
@@ -2562,7 +2549,6 @@ static bool smb1351_is_input_current_limited(struct smb1351_charger *chip)
 
 	return !!(reg & IRQ_IC_LIMIT_STATUS_BIT);
 }
-
 
 static int smb1351_parallel_set_property(struct power_supply *psy,
 				       enum power_supply_property prop,

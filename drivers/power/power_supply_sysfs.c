@@ -112,8 +112,6 @@ static ssize_t power_supply_show_property(struct device *dev,
 
 	if (off == POWER_SUPPLY_PROP_CHARGE_COUNTER_EXT)
 		return sprintf(buf, "%lld\n", value.int64val);
-	if (off == POWER_SUPPLY_PROP_RSLOW)
-		return sprintf(buf, "%lld\n", value.int64val);
 	else
 		return sprintf(buf, "%d\n", value.intval);
 }
@@ -249,8 +247,6 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(current_capability),
 	POWER_SUPPLY_ATTR(typec_mode),
 	POWER_SUPPLY_ATTR(shipmode),  /*ZTE add shipmode*/
-	/*ZTE add battery cell code*/
-	POWER_SUPPLY_ATTR(battery_cell),
 	POWER_SUPPLY_ATTR(allow_hvdcp3),
 	POWER_SUPPLY_ATTR(max_pulse_allowed),
 	POWER_SUPPLY_ATTR(soc_reporting_ready),
@@ -258,7 +254,6 @@ static struct device_attribute power_supply_attrs[] = {
 	POWER_SUPPLY_ATTR(enable_jeita_detection),
 	POWER_SUPPLY_ATTR(battery_info),
 	POWER_SUPPLY_ATTR(battery_info_id),
-	POWER_SUPPLY_ATTR(rslow),
 	/* Local extensions of type int64_t */
 	POWER_SUPPLY_ATTR(charge_counter_ext),
 	/* Properties of type `const char *' */

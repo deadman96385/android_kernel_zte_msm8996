@@ -83,7 +83,6 @@ static struct msm_rpmstats_platform_data *rpm_data = NULL;
 static unsigned long long vmin_count = 0;
 extern void debug_suspend_enabled(void);
 extern void debug_suspend_disable(void);
-extern void pm_show_rpm_master_stat(void);
 /* add add by ZTE show vdd_min and sleep clk end */
 
 
@@ -446,7 +445,6 @@ void pm_show_rpm_stats(void)
 		} else {
 			pr_info("count : last %llu now %llu\n enter vdd min failed\n", vmin_count, count);
 			debug_suspend_enabled();
-			pm_show_rpm_master_stat();
 		}
 	} else {
 		pr_err("%s: ERROR could not get vdd_min count\n", __func__);

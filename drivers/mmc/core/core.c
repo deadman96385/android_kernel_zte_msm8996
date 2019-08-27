@@ -2950,9 +2950,6 @@ static void _mmc_detect_change(struct mmc_host *host, unsigned long delay,
 	if (cd_irq && mmc_bus_manual_resume(host))
 		host->ignore_bus_resume_flags = true;
 
-	if (cd_irq)
-		host->is_bad_card = false;
-
 	mmc_schedule_delayed_work(&host->detect, delay);
 }
 
@@ -4128,8 +4125,8 @@ int mmc_pm_notify(struct notifier_block *notify_block,
 
 		spin_lock_irqsave(&host->lock, flags);
 		host->rescan_disable = 0;
-		if ((mmc_bus_manual_resume(host) &&
-				!host->ignore_bus_resume_flags) || host->is_bad_card) {
+		if (mmc_bus_manual_resume(host) &&
+				!host->ignore_bus_resume_flags) {
 			spin_unlock_irqrestore(&host->lock, flags);
 			break;
 		}

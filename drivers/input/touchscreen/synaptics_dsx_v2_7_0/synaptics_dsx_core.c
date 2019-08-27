@@ -4618,10 +4618,8 @@ static ssize_t synaptics_main_tp_ctrl(struct file *file, const char  __user *buf
 
 	if (input)
 		synaptics_rmi4_int_enable(rmi4_data, true);
-	else {
+	else
 		synaptics_rmi4_int_enable(rmi4_data, false);
-		usleep_range(16000, 20000);/*wait irq handle finished*/
-	}
 
 	if (rmi4_data->fingers_on_2d == true)
 		synaptics_rmi4_free_fingers(rmi4_data);

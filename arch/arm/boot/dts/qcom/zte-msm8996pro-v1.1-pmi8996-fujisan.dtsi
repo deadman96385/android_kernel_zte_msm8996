@@ -80,20 +80,6 @@
 		};
 	};
 	/*add MagnaChip hall sensors end*/
-
-	hw_id_material_num_gpio {
-		hw_id_material_num_gpio: hw_id_material_num_gpio {
-			mux {
-				pins = "gpio94", "gpio121", "gpio130";
-				function = "gpio";
-			};
-			config {
-				pins = "gpio94", "gpio121", "gpio130";
-				drive-strength = <2>;
-				bias-pull-down; /* pull down */
-			};
-		};
-	};
 };
 
 &pmx_mdss {

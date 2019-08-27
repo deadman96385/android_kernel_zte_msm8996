@@ -1148,10 +1148,10 @@ static int ak4962_hw_params(struct snd_pcm_substream *substream,
 		return -EINVAL;
 	}
 
-	snd_soc_update_bits(codec, CDCMCLK_DIVIDER, 0xFF, 0x09);
-	snd_soc_update_bits(codec, MSYNC5_BDV, 0xFF, 0x27);
-	snd_soc_update_bits(codec, MSYNC5_SDV, 0xFF, 0x3F);
-	snd_soc_update_bits(codec, CLOCK_MODE_SELECT, 0x7F, 0x0A);
+	snd_soc_update_bits(codec, CDCMCLK_DIVIDER, 0xFF, MDV);
+	snd_soc_update_bits(codec, MSYNC5_BDV, 0xFF, BDV);
+	snd_soc_update_bits(codec, MSYNC5_SDV, 0xFF, SDV);
+	snd_soc_update_bits(codec, CLOCK_MODE_SELECT, 0x7F, CMF);
 
 	if (ak4962->dai[dai->id].rate == 192000) {
 		snd_soc_update_bits(codec, POWER_MANAGEMENT_7, 0x20, 0x20);
@@ -7715,9 +7715,6 @@ static irqreturn_t ak4962_jde_irq(int irq, void *data)
 			if (last_report_sw == BIT_HEADSET_DUAL_MIC) {
 				input_report_switch(priv->mbhc_cfg.btn_idev, SW_MICROPHONE2_INSERT, 0);
 			}
-			if (last_report_sw == BIT_HEADSET_UNSUPPORTED) {
-			    input_report_switch(priv->mbhc_cfg.btn_idev, SW_UNSUPPORT_INSERT, 0);
-			}
 			input_sync(priv->mbhc_cfg.btn_idev);
 #endif
 		}
@@ -8527,8 +8524,6 @@ int ak4962_hs_detect(struct snd_soc_codec *codec,
 	input_set_capability(ak4962->mbhc_cfg.btn_idev, EV_SW, SW_HEADPHONE_INSERT);
 	input_set_capability(ak4962->mbhc_cfg.btn_idev, EV_SW, SW_MICROPHONE_INSERT);
 	input_set_capability(ak4962->mbhc_cfg.btn_idev, EV_SW, SW_MICROPHONE2_INSERT);
-	input_set_capability(ak4962->mbhc_cfg.btn_idev, EV_SW, SW_UNSUPPORT_INSERT);
-
 
 	rc = input_register_device(ak4962->mbhc_cfg.btn_idev);
 	if (rc != 0) {
